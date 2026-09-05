@@ -75,6 +75,40 @@ console.log(`  lint:       ${lintIsFatal ? "fatal" : "reported, non-fatal on pre
  * on the link check while hiding the lint output would cost a second round trip
  * to learn something already known.
  */
+/**
+ * The generated Prisma client is a PREREQUISITE, not a check — §38.
+ *
+ * `lib/generated/prisma` is gitignored and produced by `prisma generate`, which
+ * lives inside `npm run build`. This script runs *before* build, and the link
+ * check imports `lib/contentStore.ts`, which imports `PrismaContentStore` at
+ * the top level — eagerly, for every driver, not only Postgres. So the whole
+ * chain reaches `lib/db.ts` and its `@/lib/generated/prisma/client` import
+ * before a single link is read.
+ *
+ * On any machine that has built before, the directory is already there and the
+ * ordering is invisible. On a clean clone it is MODULE_NOT_FOUND, and the gate
+ * fails having checked nothing — the §34 failure again, arriving through the
+ * module loader instead of the content store.
+ *
+ * So the gate generates what it needs rather than assuming somebody else did.
+ * Fatal, for the §34 reason: a check that could not run must never pass.
+ *
+ * The cost is `prisma generate` running twice per deploy, here and in `build`.
+ * It is idempotent and takes seconds. Removing it from `build` would be the
+ * only way to avoid that, and it would leave `npm run build` unable to stand
+ * on its own — a worse trade than the seconds.
+ *
+ * Note it needs no database: `prisma.config.ts` omits the datasource entirely
+ * when no URL is set, precisely so generating a client never requires one.
+ */
+if (!run("Prisma client (prerequisite)", "npm run db:generate")) {
+  console.error(
+    "\nBlocked: `prisma generate` failed, so the link check cannot even import\n" +
+      "the content store. This is a prerequisite, not one of the checks. §38.",
+  );
+  process.exit(1);
+}
+
 const linksOk = run("Link check (fatal)", "npm run content:check-links");
 const lintOk = run(`ESLint (${lintIsFatal ? "fatal" : "non-fatal on preview"})`, "npm run lint");
 

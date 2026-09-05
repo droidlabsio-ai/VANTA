@@ -2855,6 +2855,94 @@ it, `.content/site.json` has no policy key, and
 changes the live site, and this is one of the few content changes where the
 `/admin` publish step is not also required.
 
+## 38. A gate that runs before the build cannot depend on the build
+
+The first production deploy failed, and not on anything the environment tables
+in `DEPLOY.md` describe. `npm run predeploy` died at `MODULE_NOT_FOUND` with a
+require stack four files deep:
+
+```
+lib/db.ts → lib/prismaContentStore.ts → lib/contentStore.ts → scripts/check-links.ts
+```
+
+`lib/db.ts` imports `@/lib/generated/prisma/client`. That directory is written
+by `prisma generate`, which lives inside `npm run build` — and `vercel.json`
+runs `npm run predeploy && npm run build`. The gate ran before the thing that
+produces what the gate imports.
+
+### Why it could only appear on a clean checkout
+
+`/lib/generated/` is gitignored, so it does not arrive with a clone; it arrives
+the first time somebody builds. Every machine that has ever run `npm run build`
+therefore has it sitting there, and the ordering bug is completely invisible —
+`npm run predeploy` passes locally, has always passed locally, and will keep
+passing locally. Vercel clones fresh every time, so it broke on the first
+deploy and would have broken on every deploy.
+
+This is the second time this project has shipped a defect that only exists in
+the state the author's machine never occupies. §31 was a link fixed in the seed
+while the published document stayed broken. This is a module present everywhere
+except where it matters. Both are the same shape: **local state standing in for
+a fact about the deployment.**
+
+### The eager import is what makes it unconditional
+
+`lib/contentStore.ts` imports `PrismaContentStore` at the top level, not inside
+the `selectStore()` branch that chooses a driver. So the Postgres adapter — and
+through it `lib/db.ts`, and through that the generated client — loads for
+*every* driver. The failure is not "the link check needs a database"; it is
+"the link check cannot be loaded without a build artifact", which happens with
+or without `DATABASE_URL`, with or without a published document.
+
+Left as an eager import deliberately. Making it lazy would fix this symptom by
+narrowing the blast radius rather than by fixing the ordering, and would leave
+the next thing that imports `lib/db.ts` before a build to rediscover it.
+
+### Where the fix belongs
+
+Three candidates, and the choice is about which invariant is being restored.
+
+- **`vercel.json`'s `buildCommand`.** Smallest change, and wrong. It fixes the
+  Vercel path and leaves `npm run predeploy` broken on a clean clone anywhere
+  else — CI, a colleague's laptop, anyone following `DEPLOY.md` §5. The gate is
+  documented as runnable on its own; it has to actually be runnable on its own.
+- **`postinstall`.** Prisma's usual recommendation, and it would work here. But
+  it trades one external ordering assumption for another: it assumes install
+  ran *with scripts enabled*, and `npm ci --ignore-scripts` is ordinary in
+  hardened CI. That is the same class of bug, one step removed.
+- **`scripts/predeploy.mjs` itself** — chosen. The gate generates its own
+  prerequisite before running any check, so it depends on nothing but the
+  checkout. Fatal if generation fails, for the §34 reason: a check that could
+  not run must never report a pass.
+
+### What it costs
+
+`prisma generate` runs twice per deploy — once in the gate, once inside
+`npm run build`. It is idempotent and took 120ms on the verifying run.
+
+The only way to avoid the duplication would be to remove it from `build`, which
+would leave `npm run build` unable to stand on its own for anyone who runs it
+directly, including a Vercel build with no `buildCommand` override. Paying the
+duplicated generate is the cheaper side of that trade by a wide margin.
+
+Generation needs no database, which is what makes it safe to put in front of
+everything: `prisma.config.ts` omits the datasource entirely when no URL is
+set, precisely so that generating a client never requires one.
+
+### The general rule this adds
+
+§33 introduced the gate and §34 hardened what it reports, and neither noticed
+the import chain underneath it. The rule that was missing:
+
+> **A check that runs before the build must not import anything the build
+> produces.** Anything `scripts/predeploy.mjs` reaches, directly or through a
+> chain, has to exist in a fresh clone — or the gate has to make it exist
+> first.
+
+Verified the way it should have been the first time: `rm -rf lib/generated`
+reproduces the exact require stack from the Vercel log, and the same command
+passes after the fix.
+
 ## Known issues / follow-ups
 
 Every entry below was re-checked against the code on 2026-08-31. Resolved items
