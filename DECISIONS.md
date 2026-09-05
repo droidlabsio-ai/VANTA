@@ -3021,6 +3021,45 @@ residue.
   this is not an a11y defect, but it is duplication worth collapsing if the two
   layouts ever converge.
 
+### Deploy-time documentation accuracy — opened 2026-09-03
+
+Found while walking through the first Vercel deploy. None of these break the
+build; all three would mislead the next person doing a deploy.
+
+- **`DEPLOY.md` §2 tells you to set a control Vercel does not have.** Lines 22,
+  160, 162 and 179 say `DATABASE_URL` "must be set in the BUILD environment,
+  not only at runtime" and that Vercel keeps build and runtime variables in
+  "separate scopes". Checked against Vercel's live docs: the only scoping axis
+  is Production / Preview / Development, and a variable scoped to an
+  environment is available to that deployment **both during the build step and
+  at runtime**. `Sensitive`/`Secret` typing does not change this either — those
+  values are present during builds, which is why Vercel redacts them from build
+  *logs*. The advice happens to produce the right action, but a reader will
+  hunt for a checkbox that does not exist. Rewrite §2 around the real axis.
+- **`scripts/check-links.ts` repeats the same claim** in its `§34` header
+  ("Build-time and runtime environment variables are separate scopes"). The
+  guard beneath it is correct and still catches the real failure; only the
+  sentence explaining why is wrong. Fix the comment, not the code.
+- **The real failure mode is environment scope, and it hits Preview.** Vercel
+  Marketplace resources (Neon is one) can be set to **Production only**, which
+  per Vercel's changelog "removes non-production access" and Preview
+  connections "are removed". A Preview build then runs with `DATABASE_URL`
+  unset, `selectStore()` silently returns the file adapter, and the link check
+  fails with `driver: file (inferred — DATABASE_URL is not set here)` — which
+  is exactly what §34 was written to catch, arriving by a different route than
+  the comment predicts. Scope `DATABASE_URL` to **Preview as well as
+  Production**, or accept that branch builds fail.
+- **`DEPLOY.md` §5 says to run migrations but never says how the URL reaches
+  the shell**, and the obvious way is the wrong one. On Windows, PSReadLine
+  appends every interactive line to
+  `%APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt`,
+  and its default sensitive-command filter matches `password`, `token`,
+  `secret`, `apikey` — none of which appear in `DIRECT_DATABASE_URL`. So
+  `$env:DIRECT_DATABASE_URL = '<url>'` writes a live credential to a plaintext
+  file that outlives the terminal. Document the `Read-Host -AsSecureString`
+  form in §5 so the value is never a command-line argument in the first place;
+  it is shell-history-proof on every platform, unlike remembering to scrub.
+
 ### Resolved
 
 - ~~Images are unoptimised PNGs~~ — **resolved**, §12. Converted to WebP at
