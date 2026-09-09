@@ -8,11 +8,13 @@ import { contentStore } from "@/lib/contentStore";
 import { getAllProductIds, getProduct, getRelated } from "@/lib/catalogue";
 import { backdropClass } from "@/lib/backdrops";
 import { formatINR } from "@/lib/format";
+import { siteUrl, siteUrlIsPlaceholder } from "@/lib/siteUrl";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { BottomNav } from "@/components/BottomNav";
 import { ProductCard } from "@/components/ProductCard";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
+import { JsonLd } from "@/components/JsonLd";
 import { AddToBagButton } from "@/components/AddToBagButton";
 import { PincodeCheck } from "@/components/shipping/PincodeCheck";
 import { SaveButton } from "@/components/SaveButton";
@@ -88,8 +90,78 @@ export default async function ProductPage({
     ? Math.round(((product.compareAtPrice! - product.price) / product.compareAtPrice!) * 100)
     : 0;
 
+  /**
+   * `Product` + `Offer` structured data.
+   *
+   * `Offer` is the half that earns its place: it is what carries price,
+   * currency and availability into a search result. `Product` alone tells a
+   * crawler the page is about a garment and nothing a shopper decides on.
+   *
+   * Omitted when the site URL is a placeholder, for the reason
+   * `components/Breadcrumbs.tsx` gives about `BreadcrumbList`: `image` and
+   * `offers.url` have to be absolute, and publishing `http://localhost:3000/…`
+   * as a machine-readable claim about where this product lives is worse than
+   * publishing nothing. The visible page is unaffected either way.
+   *
+   * **The description is `describeProduct`, the same call `generateMetadata`
+   * makes.** `Product` has no description field, so this sentence is composed;
+   * composing it twice would be two descriptions of one garment, free to
+   * drift, and the meta description is the one a person reads in the result
+   * this markup is decorating. It is deliberately not `product.image.alt` —
+   * that describes the *photograph*, and a stand-in photograph at that. See
+   * the comment in `generateMetadata` and `lib/seo.ts`.
+   *
+   * `sku` is `product.id` because that is exactly what
+   * `lib/shipping/courierPush.ts` sends Shiprocket as the SKU. One identifier
+   * for this garment everywhere it is named to somebody outside.
+   *
+   * **No `aggregateRating`.** There are no reviews in this codebase, and
+   * inventing a rating is a Google manual action — a fabricated star count is
+   * one of the things they penalise a whole site for, not just a page. It goes
+   * in when reviews exist and are real.
+   */
+  const productLd = siteUrlIsPlaceholder
+    ? null
+    : {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: product.name,
+        image: `${siteUrl}${product.image.src}`,
+        description: describeProduct(product, category?.name),
+        sku: product.id,
+        brand: { "@type": "Brand", name: "VANTA" },
+        offers: {
+          "@type": "Offer",
+          url: `${siteUrl}/products/${product.id}`,
+          priceCurrency: "INR",
+          /**
+           * `product.price` is in **whole rupees** — the catalogue's unit, not
+           * the paise every stored money column uses (§26). schema.org wants a
+           * decimal string in major units, so this formats rupees directly and
+           * must never be routed through `formatPaise` or `paiseToRupees`: the
+           * failure mode is a price wrong by a factor of a hundred, published
+           * to a search engine.
+           */
+          price: product.price.toFixed(2),
+          /**
+           * Honest today, and only today. There is no stock field anywhere in
+           * `data/types.ts` and no variants, so every product in the catalogue
+           * is buyable and `InStock` is a true statement rather than an
+           * optimistic default.
+           *
+           * **This must become conditional the moment stock or variants land.**
+           * A hard-coded `InStock` over a sold-out product is the structured
+           * -data mistake Google acts on, and it is invisible on the page —
+           * the storefront would correctly refuse the sale while this markup
+           * kept advertising it.
+           */
+          availability: "https://schema.org/InStock",
+        },
+      };
+
   return (
     <div className="storefront-shell">
+      {productLd && <JsonLd data={productLd} />}
       <Navbar nav={homepage.nav} />
 
       <main id="main" className="pt-[calc(var(--header-h)+2rem)]">

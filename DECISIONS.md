@@ -120,7 +120,19 @@ Four manual fixes were required:
 `next lint` was replaced by the ESLint CLI with a flat config
 (`eslint.config.mjs`); the legacy `.eslintrc.json` was deleted. Turbopack is the
 default bundler in 16 and both `next dev` and `next build` run clean on it.
-`npm audit` reports **0 vulnerabilities** (down from 5 high on Next 14).
+~~`npm audit` reports **0 vulnerabilities** (down from 5 high on Next 14).~~
+That was true of this section's own upgrade, and stopped being true when §24
+added Prisma. It now reports **4 high**, all in the `prisma` CLI's
+dev-dependency chain: `deepmerge-ts` (stack exhaustion) and `mysql2` (auth
+plugin downgrade, zlib decompression bomb), both reached through
+`@prisma/config`.
+
+**Deliberately not fixed.** None of it ships — `prisma` is a devDependency, and
+nothing in that chain reaches the browser bundle or the serverless runtime;
+`mysql2` in particular is a driver for a database this project does not use.
+The only remedy npm offers is `--force` down to `prisma@6`, a breaking major
+downgrade of the ORM the entire data layer is built on, to patch code that never
+runs in production. Re-check when Prisma 7 ships a release that bumps them.
 
 ## 7. How this project gets visually verified
 
@@ -431,8 +443,13 @@ a text file named `.png` is rejected; `../../../etc/passwd.png` yields the label
 
 ### What this is not
 
-It is not a media library. There is no `/admin/photos` page — upload and delete
-live inside the picker, and the sidebar entry stays marked "Soon". Delete does
+~~It is not a media library. There is no `/admin/photos` page — upload and
+delete live inside the picker, and the sidebar entry stays marked "Soon".~~
+**No longer true.** `/admin/photos` exists
+(`app/admin/(dashboard)/photos/page.tsx`) and its nav entry is `ready: true`;
+only Settings and Product pages are still marked "Soon". Upload and delete are
+still available inside the picker as well. The paragraph below still holds and
+is the part that matters: delete does
 not check whether an image is still referenced by published content: that would
 need a full content scan on every delete, and a reference can be added a moment
 later anyway. The picker warns; a missing image degrades to a broken tile, not a
@@ -2945,7 +2962,12 @@ passes after the fix.
 
 ## Known issues / follow-ups
 
-Every entry below was re-checked against the code on 2026-08-31. Resolved items
+Every entry below was re-checked against the code on 2026-09-08. (The date read
+2026-08-31 for some time after that had stopped being true: §30–§38 were all
+written later, and the "Deploy-time documentation accuracy" block below is
+itself headed 2026-09-03. A staleness date that is stale is the one field in
+this list that cannot be allowed to drift, since it is what the rest of it is
+trusted on.) Resolved items
 are struck through with a pointer to the section that resolved them rather than
 deleted, so the history of what was once wrong stays readable. **If you are
 picking this project up, this list is meant to be trustworthy — if you find an

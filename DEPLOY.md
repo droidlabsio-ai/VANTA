@@ -19,7 +19,7 @@ be left unset on purpose?**
 
 | Variable | Why |
 |---|---|
-| `DATABASE_URL` | Pooled connection. Without it there are no accounts, no orders, no checkout, and content falls back to the `/data` seed. **Set it for the build environment too** — see §2. |
+| `DATABASE_URL` | Pooled connection. Without it there are no accounts, no orders, no checkout, and content falls back to the `/data` seed. **Scope it to Preview as well as Production** — see §2. |
 | `DIRECT_DATABASE_URL` | Unpooled, for `prisma migrate` only. Needed wherever the two differ (Neon, Supabase, PgBouncer) — a transaction-mode pooler cannot hold the advisory lock a migration takes. |
 | `ADMIN_USERNAME` | Sign-in at `/admin/login`. |
 | `ADMIN_PASSWORD` | Sign-in at `/admin/login`. Use something long. |
@@ -157,17 +157,23 @@ publish timestamp, it read the real document. §34 explains why it refuses to
 pass when it cannot tell which.
 
 > [!WARNING]
-> **`DATABASE_URL` must be set in the BUILD environment, not only at runtime.**
+> **`DATABASE_URL` must be scoped to every environment you deploy — Preview
+> included, not Production alone.**
 >
-> Vercel keeps build-time and runtime environment variables in **separate
-> scopes**, and the project settings let you tick one and not the other. It is
-> an easy thing to get half-right.
+> There is no build-versus-runtime toggle to get half-right. Vercel's only
+> scoping axis is **Production / Preview / Development**, and a variable scoped
+> to an environment is available to that deployment *both* during the build step
+> and at runtime. `Sensitive`/`Secret` typing does not change this — those
+> values are present during builds, which is why Vercel redacts them from build
+> *logs* rather than withholding them.
 >
-> The link check runs at build time and picks its content store from whatever
-> the environment gives it: `DATABASE_URL` present → Postgres; absent → the
-> local file, which does not exist on a fresh Vercel checkout, so it would fall
-> back to the `/data` seed. Before §34 that combination passed green while the
-> published content nobody read stayed unchecked.
+> The way it actually goes missing is the environment axis. **Vercel Marketplace
+> resources — Neon among them — can be connected to Production only**, which
+> removes non-production access and drops the Preview connection. A branch build
+> then runs with `DATABASE_URL` unset, `selectStore()` silently returns the file
+> adapter, and there is no `.content/site.json` on a fresh checkout — so it
+> would fall back to the `/data` seed. Before §34 that combination passed green
+> while the published content nobody read stayed unchecked.
 >
 > It now **fails the build** instead, with:
 >
@@ -176,13 +182,14 @@ pass when it cannot tell which.
 >   driver:    file (inferred — DATABASE_URL is not set here)
 > ```
 >
-> If you see that, add `DATABASE_URL` to the build environment. If the
-> deployment genuinely has no database and serves the seed, declare it with
-> `CONTENT_STORE_DRIVER=file` and the check will pass and say so.
+> If you see that on a Preview deploy, widen the database connection to Preview.
+> If the deployment genuinely has no database and serves the seed, declare it
+> with `CONTENT_STORE_DRIVER=file` and the check will pass and say so.
 >
-> The same split applies to `NEXT_PUBLIC_SITE_URL` (§3) for a different reason —
-> it is *inlined* at build time — so when you set environment variables, set
-> them for **all** environments unless you have a specific reason not to.
+> `NEXT_PUBLIC_SITE_URL` (§3) needs the same breadth for a different reason — it
+> is *inlined* at build time, so a Preview build without it bakes in the
+> fallback. Set every variable for **all** environments unless you have a
+> specific reason not to.
 
 ---
 
@@ -267,6 +274,33 @@ Three ways forward, in increasing order of cost:
    Applies `prisma/migrations/` to `DIRECT_DATABASE_URL`. Never use
    `prisma db push` — see the warning in `README.md`; a schema only ever pushed
    is a schema a fresh production database knows nothing about.
+
+   **Getting the URL into the shell without leaving it on disk.** This runs from
+   your machine against production, so the connection string has to be in the
+   environment for one command — and the obvious way writes it somewhere
+   permanent. On Windows, PSReadLine appends every interactive line to
+   `%APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt`,
+   and its default sensitive-command filter only matches `password`, `token`,
+   `secret` and `apikey` — none of which appear in `DIRECT_DATABASE_URL`. So
+   `$env:DIRECT_DATABASE_URL = '<url>'` writes a live database credential to a
+   plaintext file that outlives the terminal.
+
+   Prompt for it instead, so the value is never a command-line argument in the
+   first place. This is shell-history-proof on every platform, which
+   remembering to scrub afterwards is not:
+
+   ```powershell
+   $secure = Read-Host "DIRECT_DATABASE_URL" -AsSecureString
+   $env:DIRECT_DATABASE_URL = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+   npm run db:deploy
+   $env:DIRECT_DATABASE_URL = $null
+   ```
+
+   The bash equivalent is `read -rs DIRECT_DATABASE_URL` followed by
+   `export DIRECT_DATABASE_URL`. Either way the variable dies with the shell —
+   pulling it from `vercel env pull` into a gitignored `.env.local` works too,
+   and `prisma.config.ts` reads that file deliberately (§24).
 
    Adopting a database that was previously `db push`-ed? It has the tables but
    no migration bookkeeping, so tell Prisma the baseline is already applied,

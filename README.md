@@ -112,8 +112,16 @@ Full rationale and the current server/client split are in `DECISIONS.md` §13.
 
 **From the admin:** every image field has an **Upload photo** button. The file is
 converted to WebP, capped at 2400px on its longest edge, stripped of metadata,
-and stored under `.content/uploads/`, served from `/media/<id>`. Uploads are
-saved immediately — they do not wait for "Publish changes".
+and served from `/media/<id>`. Uploads are saved immediately — they do not wait
+for "Publish changes".
+
+Where the bytes land depends on the adapter, selected the same way the content
+store is: `BLOB_READ_WRITE_TOKEN` present → Vercel Blob, absent → the local
+`.content/uploads/` directory, with `MEDIA_STORE_DRIVER=file|blob` overriding
+either way. The file adapter is the default for local development. On Vercel it
+cannot work — the filesystem is ephemeral — so an upload there is **refused
+before the write** with a message naming the variable to set, rather than
+succeeding and losing the file at the next deploy. See `DECISIONS.md` §36.
 
 **As a committed asset** (for imagery that should live in the repo):
 `/public/images` is WebP-only. Convert first, keep the original in
@@ -304,8 +312,14 @@ says undeliverable, because an API timeout is not an answer.
 Schedule the sync on Vercel with a `vercel.json`:
 
 ```json
-{ "crons": [{ "path": "/api/courier/sync", "schedule": "*/15 * * * *" }] }
+{ "crons": [{ "path": "/api/courier/sync", "schedule": "0 3 * * *" }] }
 ```
+
+**Vercel's Hobby plan allows once-daily crons only**, with per-hour precision —
+anything more frequent is rejected and the **deploy fails outright**, which is
+why no `crons` block ships today. Pro and Enterprise allow once per minute. See
+`DECISIONS.md` §27 and `DEPLOY.md` §4. `CRON_SECRET` must be set or the route
+refuses the call.
 
 It drains the push queue and re-reads tracking for shipments still in flight —
 a safety net under the tracking webhook, which is the primary path.
@@ -361,8 +375,10 @@ field in [`data/types.ts`](data/types.ts).
 **Sign in at `/admin/login`** with `ADMIN_USERNAME` / `ADMIN_PASSWORD`. Every
 `/admin` route is gated by `middleware.ts`, so a direct URL visit while signed
 out redirects rather than flashing content. Sessions last 7 days; "Sign out"
-sits next to the profile chip in the top bar. Auth architecture and the
-in-memory rate-limit caveat are in `DECISIONS.md` §17.
+sits next to the profile chip in the top bar. Auth architecture is in
+`DECISIONS.md` §17; the rate limiter it describes as an in-memory `Map` was
+superseded by §25 and is now Postgres-backed, keyed by IP *and* identifier, with
+exponential backoff — as the Security section above describes.
 
 ```
 app/admin/            Admin routes (Overview, Homepage Sections, Products, Categories)
@@ -378,9 +394,11 @@ Built so far:
 - **Products** and **Categories** — table plus slide-in edit drawer
 - **Orders & Shipments** — every order, whether it's paid, where the parcel is,
   and a "Send to courier" button for anything the queue hasn't managed yet
+- **Photos & Images** — the uploaded media library, with upload and delete
+- **Security** — active admin sessions, "sign out everywhere else", audit log
 
-Hero and Brand Statement share one `SectionEditor`. Photos & Images and Settings
-appear in the sidebar marked "Soon".
+Hero and Brand Statement share one `SectionEditor`. Settings and Product pages
+are the only sidebar entries still marked "Soon".
 
 **Changes persist.** "Publish changes" validates the draft and writes it to the
 content store, and the storefront reads from that store rather than importing
@@ -466,9 +484,10 @@ The short version:
 
 The `> [!IMPORTANT]` note above about the JSON content store no longer applies
 once `DATABASE_URL` is set: content moves to the `ContentDocument` table and
-the read-only filesystem stops mattering. **Uploaded images still write to
-`.content/uploads/`** and still need a writable disk — that is the remaining
-piece to move before a Vercel deploy is complete.
+the read-only filesystem stops mattering. **Uploaded images need a Blob store**:
+create one under Project → Storage → Blob and connect it to the environments you
+deploy, which sets `BLOB_READ_WRITE_TOKEN` and switches the media adapter over.
+Without it, uploads on Vercel are refused rather than silently lost. §36.
 
 If `/admin` has published anything on this machine, carry it across once:
 

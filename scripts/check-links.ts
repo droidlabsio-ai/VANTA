@@ -25,9 +25,18 @@
  * visible; otherwise it silently returns the file adapter, which on a fresh
  * checkout finds no `.content/site.json` and falls back to the `/data` seed.
  *
- * On Vercel that is not hypothetical. Build-time and runtime environment
- * variables are separate scopes, and it is easy to set `DATABASE_URL` for one
- * and not the other. The check would then validate the seed, print "all
+ * On Vercel that is not hypothetical — though not for the reason this comment
+ * used to give. It claimed build-time and runtime variables are "separate
+ * scopes"; they are not. Vercel's only scoping axis is Production / Preview /
+ * Development, and a variable scoped to an environment is available to that
+ * deployment both during the build step and at runtime. (`Sensitive`/`Secret`
+ * typing does not change that either — those values are present during builds,
+ * which is why Vercel redacts them from build *logs*.)
+ *
+ * The real way `DATABASE_URL` goes missing here is the environment axis.
+ * Marketplace resources — Neon among them — can be connected to Production
+ * only, which removes non-production access, so a Preview build runs with no
+ * `DATABASE_URL` at all. The check would then validate the seed, print "all
  * resolve", and pass green — while the published document it was invoked to
  * verify went entirely unread. That is the §31 failure reintroduced by the tool
  * written to prevent it, and a silent pass is worse than no check at all.
@@ -102,8 +111,10 @@ function collectHrefs(node: unknown, path: string, out: Found[]): void {
  *
  * The distinction decides what an absent database *means*. Locally it usually
  * means "I have not set one up", which is normal and fine. In a deploy context
- * it far more often means "it is set at runtime and the build scope was
- * missed" — the silent pass this guard exists to stop.
+ * it far more often means the variable is not scoped to *this* environment —
+ * typically a Production-only database on a Preview build — which is the silent
+ * pass this guard exists to stop. See the header for why it is not a
+ * build-versus-runtime split.
  */
 function isDeployContext(): boolean {
   return Boolean(process.env.VERCEL || process.env.CI);
@@ -146,13 +157,20 @@ async function main(): Promise<void> {
     console.error(`  driver:    file (inferred — DATABASE_URL is not set here)`);
     console.error(`  looked in: ${store.location}`);
     console.error("");
-    console.error("In a deploy context this almost always means DATABASE_URL is set for");
-    console.error("runtime but not for the BUILD environment — separate scopes on Vercel.");
+    console.error("In a deploy context this almost always means DATABASE_URL is not scoped");
+    console.error("to THIS environment. Vercel has no build-vs-runtime split to get half");
+    console.error("right: the only axis is Production / Preview / Development, and a");
+    console.error("variable scoped to an environment is there for both the build and the");
+    console.error("runtime. What does happen is a Marketplace resource (Neon, for one) set");
+    console.error("to Production only, which removes Preview access — so branch builds run");
+    console.error("with no database at all.");
+    console.error("");
     console.error("Left alone, this check would have validated the /data seed and passed");
     console.error("while the document actually served went unread. §31, §34.");
     console.error("");
     console.error("Fix one of these:");
-    console.error("  - add DATABASE_URL to the build environment; or");
+    console.error("  - scope DATABASE_URL to this environment (Preview as well as");
+    console.error("    Production, if this is a branch deploy); or");
     console.error("  - if this deployment genuinely has no database and serves the seed,");
     console.error("    say so explicitly with CONTENT_STORE_DRIVER=file.");
     console.error(HR);

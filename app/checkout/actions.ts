@@ -249,10 +249,15 @@ export async function createOrder(
   /**
    * The payment handoff, attempted after the order exists.
    *
-   * Order matters. Ours is written first and theirs second, so a database
-   * failure can never leave a Razorpay order with no local counterpart —
-   * a payment nobody could reconcile. The reverse (theirs orphaned) cannot
-   * happen at all, because theirs is only created once ours has committed.
+   * Order matters, but less than §27 originally claimed. Ours is written first
+   * and theirs second, so there can never be a Razorpay order for an order that
+   * was rolled back — theirs is only created once ours has committed. That is
+   * the whole of what the ordering buys.
+   *
+   * It does NOT prevent a live, payable Razorpay order with nothing on our side
+   * pointing at it. That gap is the linking write below, which used to swallow
+   * its own failure; §29 retracted the stronger claim and closed it. Read the
+   * comment on that write for what actually protects the payment now.
    *
    * And it is best-effort. If Razorpay is unreachable right now the order is
    * still placed, still visible, and the order page offers to start the
