@@ -61,6 +61,7 @@ export const products: Product[] = [
     name: "Vector Storm Shell",
     categoryId: "jackets",
     price: 9499,
+    compareAtPrice: 12999,
     image: {
       src: "/images/product-shell-jacket.webp",
       alt: "Vector Storm Shell — storm shell jacket on a sunset backdrop",
