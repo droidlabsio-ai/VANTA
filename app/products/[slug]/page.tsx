@@ -9,13 +9,20 @@ import { getAllProductIds, getProduct, getRelated } from "@/lib/catalogue";
 import { backdropClass } from "@/lib/backdrops";
 import { formatINR } from "@/lib/format";
 import { siteUrl, siteUrlIsPlaceholder } from "@/lib/siteUrl";
+import { priceSummary, variantsOf } from "@/lib/variants";
+import { stockStatus } from "@/lib/stock";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { BottomNav } from "@/components/BottomNav";
 import { ProductCard } from "@/components/ProductCard";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { JsonLd } from "@/components/JsonLd";
-import { AddToBagButton } from "@/components/AddToBagButton";
+import { SizePicker } from "@/components/product/SizePicker";
+import {
+  VariantAddToBag,
+  VariantPrice,
+  VariantSelectionProvider,
+} from "@/components/product/VariantSelection";
 import { PincodeCheck } from "@/components/shipping/PincodeCheck";
 import { SaveButton } from "@/components/SaveButton";
 import { trustIcons } from "@/components/ui/Icons";
@@ -67,7 +74,15 @@ function describeProduct(product: Product, categoryName: string | undefined): st
   const close = product.codAvailable
     ? "Cash on delivery available, free shipping over ₹1,999."
     : "Free shipping over ₹1,999, with seven-day returns.";
-  return `${product.name} — ${where}, ${formatINR(product.price)}. Technical streetwear built for the Indian street. ${close}`;
+  /**
+   * The price as the page states it before a size is chosen: "from" the
+   * cheapest size only when sizes genuinely cost different amounts. Answered by
+   * `priceSummary` — the same helper as the page and every card — so the search
+   * result cannot quote a price the page does not show.
+   */
+  const { lowest, varies } = priceSummary(product);
+  const price = `${varies ? "from " : ""}${formatINR(lowest)}`;
+  return `${product.name} — ${where}, ${price}. Technical streetwear built for the Indian street. ${close}`;
 }
 
 export default async function ProductPage({
@@ -79,16 +94,29 @@ export default async function ProductPage({
   const product = await getProduct(slug);
   if (!product) notFound();
 
-  const [{ homepage }, related] = await Promise.all([
+  /**
+   * Through `variantsOf`, never `product.variants` directly. A published
+   * document from before sizes existed has no such key, and this page has to
+   * keep rendering on every site that published one — see the comment there.
+   */
+  const variants = variantsOf(product);
+
+  const [{ homepage }, related, stock] = await Promise.all([
     contentStore.read(),
     getRelated(product),
+    stockStatus(variants),
   ]);
 
   const category = homepage.categories.items.find((c) => c.id === product.categoryId);
-  const onSale = product.compareAtPrice !== undefined && product.compareAtPrice > product.price;
-  const savedPct = onSale
-    ? Math.round(((product.compareAtPrice! - product.price) / product.compareAtPrice!) * 100)
-    : 0;
+  const prices = priceSummary(product);
+  const offerUrl = `${siteUrl}/products/${product.id}`;
+
+  /**
+   * Whether anything can be bought, from the same stock helper the size picker
+   * reads — so when stock exists, the structured data and the buttons change
+   * together. A product with no variant data behaves as it always did.
+   */
+  const buyable = variants.length === 0 || variants.some((v) => stock[v.sku] !== "sold-out");
 
   /**
    * `Product` + `Offer` structured data.
@@ -130,33 +158,44 @@ export default async function ProductPage({
         description: describeProduct(product, category?.name),
         sku: product.id,
         brand: { "@type": "Brand", name: "VANTA" },
-        offers: {
-          "@type": "Offer",
-          url: `${siteUrl}/products/${product.id}`,
-          priceCurrency: "INR",
-          /**
-           * `product.price` is in **whole rupees** — the catalogue's unit, not
-           * the paise every stored money column uses (§26). schema.org wants a
-           * decimal string in major units, so this formats rupees directly and
-           * must never be routed through `formatPaise` or `paiseToRupees`: the
-           * failure mode is a price wrong by a factor of a hundred, published
-           * to a search engine.
-           */
-          price: product.price.toFixed(2),
-          /**
-           * Honest today, and only today. There is no stock field anywhere in
-           * `data/types.ts` and no variants, so every product in the catalogue
-           * is buyable and `InStock` is a true statement rather than an
-           * optimistic default.
-           *
-           * **This must become conditional the moment stock or variants land.**
-           * A hard-coded `InStock` over a sold-out product is the structured
-           * -data mistake Google acts on, and it is invisible on the page —
-           * the storefront would correctly refuse the sale while this markup
-           * kept advertising it.
-           */
-          availability: "https://schema.org/InStock",
-        },
+        /**
+         * Prices are whole **rupees** — the catalogue's unit for products and
+         * sizes alike, not the paise every stored money column uses (§26).
+         * schema.org wants a decimal string in major units, so they are
+         * formatted directly and must never be routed through `formatPaise` or
+         * `paiseToRupees`: the failure mode is a price wrong by a factor of a
+         * hundred, published to a search engine.
+         *
+         * When sizes cost different amounts there is no single price to state,
+         * so an `AggregateOffer` carries the range. A plain `Offer` at the
+         * product's base price would publish a figure no size may actually sell
+         * for, and structured data has to match what the page shows. Which of
+         * the two applies is `priceSummary`'s answer, the page's and the
+         * cards'.
+         *
+         * Availability comes from the stock helper rather than being written
+         * in. There is no stock yet, so it reads in stock; when stock lands,
+         * this follows the buttons instead of contradicting them — a hard-coded
+         * `InStock` over a sold-out product is the structured-data mistake
+         * Google acts on, and it would be invisible on the page.
+         */
+        offers: prices.varies
+          ? {
+              "@type": "AggregateOffer",
+              url: offerUrl,
+              priceCurrency: "INR",
+              lowPrice: prices.lowest.toFixed(2),
+              highPrice: prices.highest.toFixed(2),
+              offerCount: variants.length,
+              availability: buyable ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+            }
+          : {
+              "@type": "Offer",
+              url: offerUrl,
+              priceCurrency: "INR",
+              price: prices.lowest.toFixed(2),
+              availability: buyable ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+            },
       };
 
   return (
@@ -197,28 +236,29 @@ export default async function ProductPage({
               {product.name}
             </h1>
 
-            <div className="mt-5 flex flex-wrap items-baseline gap-3">
-              <span className="text-2xl text-bone">{formatINR(product.price)}</span>
-              {onSale && (
-                <>
-                  <span className="text-base text-bone/40 line-through">
-                    {formatINR(product.compareAtPrice!)}
-                  </span>
-                  <span className="bg-flare-red px-2 py-1 text-[10px] font-bold uppercase tracking-[0.15em] text-bone">
-                    {savedPct}% off
-                  </span>
-                </>
-              )}
-            </div>
+            {/* The price, the size picker and Add to Bag share one selection.
+                The provider renders no DOM of its own: the description and the
+                save button between them stay server-rendered, and only the
+                three leaves that read the selection are client components. */}
+            <VariantSelectionProvider
+              price={product.price}
+              compareAtPrice={product.compareAtPrice}
+              variants={variants}
+              stock={stock}
+            >
+              <VariantPrice className="mt-5" />
 
-            <p className="mt-6 max-w-prose whitespace-pre-line text-base leading-relaxed text-bone/70">
-              {product.image.alt}
-            </p>
+              <p className="mt-6 max-w-prose whitespace-pre-line text-base leading-relaxed text-bone/70">
+                {product.image.alt}
+              </p>
 
-            <div className="mt-8 flex flex-wrap items-start gap-3">
-              <AddToBagButton productId={product.id} />
-              <SaveButton productId={product.id} productName={product.name} />
-            </div>
+              <SizePicker className="mt-8" />
+
+              <div className="mt-8 flex flex-wrap items-start gap-3">
+                <VariantAddToBag productId={product.id} />
+                <SaveButton productId={product.id} productName={product.name} />
+              </div>
+            </VariantSelectionProvider>
 
             {/* Before the bag, not after checkout. The two things that decide
                 whether this is worth buying are whether it reaches them and
