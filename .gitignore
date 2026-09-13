@@ -40,3 +40,6 @@ next-env.d.ts
 
 # generated Prisma client (rebuilt by `npm run build`)
 /lib/generated/
+
+# local scratch notes that hold secrets (connection strings, tokens)
+*.local.txt
