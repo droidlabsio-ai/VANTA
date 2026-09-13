@@ -3311,6 +3311,216 @@ same check, unchanged, is part 3 of this design. If someone loses an afternoon's
 work to a silent overwrite before the rest of this is built, that is the piece
 to build in response.
 
+## 41. Variants live in the content document, and stock does not
+
+Products gained sizes on the `variants-stage-1-2` branch: the data model in
+`7bc4559`, the size picker in `fd020e2`. Until this section, the reasoning
+existed only in code comments — the exact gap §39 was written to close, one
+feature later. §19 is the precedent: it recorded `categoryId`, the last field
+added to `data/types.ts`. `variants` is the next.
+
+### A field on the product, not a table
+
+`Product.variants: ProductVariant[]` — a size, a SKU, and an optional per-size
+price. There is no variants table, and the reason is the catalogue itself:
+`prisma/schema.prisma` opens by saying it "lives in the content store, not in
+its own table", and a bag line, a saved item and an order resolve a product id
+against that document when rendered (§15, §24). A variants table would put
+half of one product in a JSON document and half in Postgres, joined by a
+string with no foreign key, and every publish would have to reconcile the two.
+
+Worth being honest about how this was settled: the field shape was specified
+in the brief for the work, and no table design was prototyped against it. It
+follows from the content-document model rather than beating an alternative in
+a comparison.
+
+### No `stock` field, on purpose
+
+This is the most important decision in the model, and the comment on
+`ProductVariant` in `data/types.ts` is where the argument lives.
+
+The content document is read, modified and written back **whole** on every
+publish (§15, §39). A stock count inside it would be decremented by checkout
+with a read-modify-write, which races two concurrent checkouts. The worse
+failure needs no concurrency at all: an editor opens `/admin`, spends twenty
+minutes on the hero, and presses Publish — writing back every stock count as it
+stood when they loaded the page, and silently undoing every sale made since. A
+count needs an atomic decrement, and a JSON column holding the entire catalogue
+cannot give it one.
+
+So stock belongs in Postgres, keyed by SKU. **That table does not exist yet.**
+
+### `lib/stock.ts` is a seam, and "in stock" is currently true
+
+`stockStatus(variants)` is server-only and async, and returns an explicit
+status for every SKU rather than a list of the sold-out ones.
+
+- **Server-only and async** because stock will live in a database the browser
+  cannot reach. Availability is answered on the server and handed down as
+  props; being async already means the query can be added without every caller
+  gaining an `await`.
+- **Every SKU, explicitly**, because once this is a query a SKU missing from
+  the result must mean something decided in one place, not something each
+  caller infers from absence.
+- **Always `"in-stock"` today, and that is honest rather than optimistic.**
+  There is no stock anywhere, so nothing can be sold out. The sold-out
+  rendering was built and driven from this function, and verified by
+  temporarily marking one SKU sold out; the stage that adds stock replaces the
+  body and nothing that calls it changes.
+
+One caveat that was reasoned, not tested: product pages prerender when no
+database is configured (§26, §28), so availability computed here would be
+baked in at build time. It becomes request-time only because `DATABASE_URL`
+makes the pages dynamic — the coupling §28 warns about. The stage that adds
+stock should declare the page's rendering mode rather than inherit it.
+
+### SKUs are stored, generated, and not the first word
+
+`makeSku` builds `VNT-<product code>-<size>`, and the result is **stored** on
+the variant, not computed at render time. A SKU is handed to people outside this
+codebase — a courier, a warehouse, an invoice — and an identifier that changed
+because somebody improved the function would be worse than one that is merely
+ugly. Storing it is also what lets an editor override one later. For the same
+reason the seed carries all 175 variants as literals rather than calling the
+function: generated once, checked, and frozen.
+
+The brief's example was `VNT-APX-M` — a code from the first word alone. **Run
+against the real 45 product ids, a first-word-only code produced nine
+collisions.** Four products start with `grid`; `vector-storm-shell` and
+`vector-cargo-pant` share every letter such a code would use. No function of
+the first word can separate them. `productCode` therefore takes the first
+word's consonant skeleton, adds the initial of every later word, and keeps any
+word containing a digit whole — `apex-technical-shell` is `APXTS`,
+`series-026-field-parka` is `SRS026FP`. That rule was chosen by running
+candidates against the catalogue, and it has no collisions across all 45, at
+four to eight characters.
+
+**Collision-free is a fact about today's ids, not a guarantee.** A future
+`vector-storm-shield` would produce the same code as `vector-storm-shell`. The
+function makes the common case right; the schema is what enforces uniqueness.
+
+### Uniqueness is a whole-document rule
+
+SKU uniqueness is checked in the `superRefine` block of `lib/contentSchema.ts`
+— the publish-time, cross-field rules — and not on the variant schema. A
+variant, or a product, cannot see any other product's SKUs, and uniqueness
+checked inside one product would pass two products that both sell
+`VNT-APXTS-M`. SKUs are compared trimmed and uppercased: `vnt-apxts-m` is the
+same SKU as `VNT-APXTS-M` to a scanner, which does not distinguish case.
+
+The same block requires sizes to be unique within a product, compared the same
+way — "m" and "M" are one size to a shopper. On the field itself, publishing
+requires at least one size and a positive per-size price when one is set.
+Drafts check shape only (§39): a size list being rebuilt is empty for a moment,
+and refusing to save it then would lose the work autosave exists to protect.
+
+Measured, and easy to get wrong: a document with **no `variants` key at all**
+does not fail on "Needs at least one size." It fails earlier, on the type —
+`Invalid input: expected array, received undefined` — and it fails in the draft
+schema too, because a missing field is a shape error. The pre-variant published
+document on this machine produced 45 of those, one per product, in both.
+
+### Sizes by category; prices by size
+
+Sizes are not chosen per product. `SIZE_SETS` in `lib/variants.ts` is the only
+place they are defined, keyed by category id: jackets, parkas and tops share
+S–XL, pants run 28–38 by waist, bags are One Size. A product has one
+`categoryId` (§19), so its sizes follow from where it is filed and nobody has
+to remember that trousers are sized differently. Two limits follow from keying
+on category ids, which are data: the groups (`clothing`, `accessories` — §22)
+have no size set, and neither does a category an editor creates in `/admin`
+until one is added in code.
+
+Prices, by contrast, may vary by size. `ProductVariant.price` is optional, in
+whole rupees like `Product.price`, and omitted when it matches — which is every
+size of every product today. Whether prices differ is answered in exactly one
+place, `priceSummary`, used by the product page, every product card, the meta
+description and the structured data. It compares what sizes actually cost, not
+whether they carry a price field, and "From" appears only when they genuinely
+differ: "From ₹8,999" when every size costs ₹8,999 sends people hunting for a
+cheaper size that does not exist.
+
+### `variantsOf()` tolerates documents from before sizes — temporarily
+
+`Product.variants` is required by the type, but a published document written
+before this work has no such key, and reading it directly returns `undefined`.
+§31 is why that is not hypothetical: the seed gaining variants changes nothing
+about a document already published. `variantsOf()` returns an empty list
+instead, and a product with no variants behaves exactly as it did before —
+no picker, one price, Add to Bag enabled. It is the one place that tolerance
+lives.
+
+It is not meant to stay. On this machine the gap was closed by copying each
+product's `variants` from the seed onto the published document, matched by id:
+all 45 ids matched, the result passed the strict schema, and the admin edits in
+that document survived. That was done by a throwaway script and imported with
+`npm run content:import`; neither the script nor the merged document is in the
+repository. Production is reported to have no published row at all, so it
+serves the seed, which already carries variants — reported by the operator and
+not verified from here.
+
+**The `?? []` can be removed only once no environment holds a published or
+draft document without variants**, checked per environment rather than assumed
+— and it has to go before the bag starts carrying a SKU, because from then on
+"no variants" can no longer mean "behave as before".
+
+### The size picker is a set of radio buttons
+
+`components/product/SizePicker.tsx` is `role="radiogroup"`, named by the
+visible "Size" label, with one `role="radio"` button per size and its state in
+`aria-checked`. It uses a roving tabindex: the group is a single Tab stop — the
+chosen size, or the first available one — and Tab lands there without choosing
+anything. Arrow keys, Home and End move between sizes and choose as they go.
+Nothing is pre-selected on a multi-size product, because pre-picking M is how
+somebody buys the wrong size; a one-size product renders no picker at all.
+
+Sold-out sizes are shown, dimmed and crossed out, and marked `aria-disabled`
+rather than `disabled`. A natively disabled button leaves the tab order and is
+skipped by screen readers in browse mode; `aria-disabled` keeps it reachable so
+it can announce itself. Arrow keys skip them, as the radio-group pattern
+specifies. "Sold out" is appended as `sr-only` text, following §11. Add to Bag
+takes the same approach: it is `aria-disabled` with a visible "Select a size"
+reason, and pressing it moves focus to the picker.
+
+Three things are worth recording as they actually happened:
+
+- **Buttons with ARIA roles, not native radio inputs.** The stated reason is
+  hydration — a native radio clicked between the HTML arriving and React
+  hydrating would show as chosen while React still believes nothing is. That
+  was reasoned, not reproduced.
+- **Space and Enter are handled in the component** rather than left to the
+  button's native activation. The comment gives the design reason, and it is a
+  fair one; it was also added after the in-app browser used for verification
+  could not trigger native button activation at all.
+- **Not everything could be verified here.** Tab-without-choosing, Enter,
+  arrow keys, skipping a sold-out size, a blocked click moving focus, and
+  wrapping at 320px were all exercised in the browser. Space could not be sent
+  end to end — the automation delivered it with an empty key — and the
+  sold-out size's computed accessible name could not be read, because the
+  tool's name computation is demonstrably not Chrome's. Home and End were not
+  exercised. Both unverified behaviours deserve one pass with a real keyboard
+  and a real screen reader.
+
+### What is still owed
+
+- **The bag carries no size.** A shopper chooses one, and Add to Bag adds the
+  product: a bag line is `{ id, qty }`. `OrderItem` has no size or SKU column,
+  so carrying a size through checkout needs a migration, and
+  `lib/shipping/courierPush.ts` sends the product id as the courier's `sku`.
+- **The product page's structured data is only partly variant-aware.**
+  `availability` already reads `lib/stock.ts`, and when sizes cost different
+  amounts the offer is already an `AggregateOffer` with `lowPrice` and
+  `highPrice`. What remains: `sku` is still the product slug, and the
+  `AggregateOffer` branch has never been observed rendered — structured data
+  is suppressed locally because the site URL is a placeholder, and no product
+  has varying prices.
+- **There is no stock table.** `lib/stock.ts` says everything is in stock
+  because nothing else can be true yet.
+- **A product created in `/admin` cannot be published.** The drawer's blank
+  product has `variants: []`, and publishing requires at least one size. There
+  is no size editor.
+- **`variantsOf()`'s tolerance**, until the condition above is met.
+
 ## Known issues / follow-ups
 
 Every entry below was re-checked against the code on 2026-09-08. (The date read
@@ -3366,6 +3576,12 @@ entry that no longer matches the code, fix the entry in the same change.**
   the old behaviour rather than breaking, which makes a real test event more
   valuable, not less. Confirm both the entity nesting **and** that `notes`
   comes back on the payment entity.
+- **The bag does not carry a size.** The product page asks for one (§41) and
+  then discards it: a bag line is `{ id, qty }`, `OrderItem` has no size or SKU
+  column, and the courier push sends the product id as the `sku`. An order
+  placed today cannot say which size to ship. Needs a bag line keyed by SKU, a
+  migration adding the size and SKU to `OrderItem`, and the variant SKU in
+  `lib/shipping/courierPush.ts`.
 
 ### Correctness and security
 
@@ -3448,6 +3664,20 @@ entry that no longer matches the code, fix the entry in the same change.**
   is right, and pressing Discard resolves it — but the symptom ("it says I have
   unsaved changes and I don't") reads like a bug in the banner, which is the
   wrong place to go looking. §39.
+- **Product structured data is only partly variant-aware.** `availability`
+  already reads `lib/stock.ts`, and a product whose sizes cost different amounts
+  already gets an `AggregateOffer` with `lowPrice` and `highPrice`. Two things
+  remain: `sku` is the product slug rather than a variant SKU, and the
+  `AggregateOffer` branch has never been seen rendered — structured data is
+  omitted locally because the site URL is a placeholder, and no product has
+  varying prices. Check it once on a deployment with a real site URL and a
+  product priced by size. §41.
+- **`variantsOf()` treats a product with no `variants` as having none.** That
+  keeps a published document from before sizes rendering as it always did, and
+  it is temporary. Remove the `?? []` only once no environment holds a published
+  or draft document without variants — checked per environment, not assumed —
+  and before the bag carries a SKU, after which "no variants" can no longer mean
+  "behave as before". §41.
 
 ### Performance
 
