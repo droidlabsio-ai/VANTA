@@ -311,4 +311,8 @@ export const blankProduct = (): Product => ({
   backdrop: "red",
   href: "",
   codAvailable: true,
+  // No sizes yet: the drawer has no variant editor until a later stage. A
+  // product saved like this is refused at publish ("needs at least one size")
+  // rather than going live unbuyable.
+  variants: [],
 });

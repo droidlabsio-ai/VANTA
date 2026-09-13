@@ -5,6 +5,7 @@ import type {
   HeroContent,
   HomepageContent,
   Product,
+  ProductVariant,
 } from "@/data/types";
 import type { SiteContent } from "./contentStore";
 import { isBrokenHref } from "./linkHref";
@@ -104,6 +105,14 @@ const brandStatement = z.object({
   backdrop,
 }) satisfies z.ZodType<BrandStatementContent>;
 
+const variant = z.object({
+  size: nonEmpty,
+  sku: nonEmpty,
+  // Whole rupees, like `price`. Positive at publish, not merely non-negative:
+  // a size that costs nothing is a typo, not a promotion.
+  price: (strict ? z.number().int().positive() : z.number().int().nonnegative()).optional(),
+}) satisfies z.ZodType<ProductVariant>;
+
 const product = z.object({
   id: nonEmpty,
   name: nonEmpty,
@@ -118,6 +127,10 @@ const product = z.object({
   // Written by the server, never by a form, so this only has to be a valid
   // date string — an editor cannot put anything else here.
   badgeSetAt: z.iso.datetime().optional(),
+  // At least one size to publish: a product with none cannot be bought, and
+  // would reach the storefront as a page with nothing to add to the bag. A
+  // draft may have none — someone rebuilding a size list empties it first.
+  variants: strict ? z.array(variant).min(1, "Needs at least one size.") : z.array(variant),
 }) satisfies z.ZodType<Product>;
 
 const productRail = z.object({
@@ -268,6 +281,50 @@ return z
         });
       }
       seen.add(p.id);
+    });
+
+    /**
+     * Sizes unique within a product; SKUs unique across the whole catalogue.
+     *
+     * The SKU rule is why these live here rather than on the variant schema: a
+     * single product cannot see any other product's SKUs, and uniqueness
+     * *within* one product would pass two products that both sell a
+     * "VNT-APXTS-M". This is also the check that actually guarantees
+     * uniqueness — `makeSku` is collision-free across today's ids, which is a
+     * fact about the current catalogue and not a promise about the next one.
+     *
+     * Compared trimmed and case-folded: "m" and "M" are one size to a shopper,
+     * and "vnt-apxts-m" is the same SKU as "VNT-APXTS-M" to a scanner.
+     */
+    const skuOwner = new Map<string, string>();
+    value.products.forEach((p, i) => {
+      const sizes = new Set<string>();
+      p.variants.forEach((v, j) => {
+        const size = v.size.trim().toUpperCase();
+        if (sizes.has(size)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["products", i, "variants", j, "size"],
+            message: `"${p.name}" lists size "${v.size}" more than once.`,
+          });
+        }
+        sizes.add(size);
+
+        const sku = v.sku.trim().toUpperCase();
+        const owner = skuOwner.get(sku);
+        if (owner === undefined) {
+          skuOwner.set(sku, p.id);
+        } else {
+          ctx.addIssue({
+            code: "custom",
+            path: ["products", i, "variants", j, "sku"],
+            message:
+              owner === p.id
+                ? `"${p.name}" uses SKU "${v.sku}" for two sizes.`
+                : `SKU "${v.sku}" on "${p.name}" is already used by product "${owner}".`,
+          });
+        }
+      });
     });
   }) satisfies z.ZodType<SiteContent>;
 }

@@ -28,6 +28,12 @@ export const products: Product[] = [
     href: "/products/apex-technical-shell",
     codAvailable: true,
     badge: "NEW",
+    variants: [
+      { size: "S", sku: "VNT-APXTS-S" },
+      { size: "M", sku: "VNT-APXTS-M" },
+      { size: "L", sku: "VNT-APXTS-L" },
+      { size: "XL", sku: "VNT-APXTS-XL" },
+    ],
   },
   {
     id: "tactical-overcoat",
@@ -43,6 +49,12 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/tactical-overcoat",
     codAvailable: false,
+    variants: [
+      { size: "S", sku: "VNT-TCTO-S" },
+      { size: "M", sku: "VNT-TCTO-M" },
+      { size: "L", sku: "VNT-TCTO-L" },
+      { size: "XL", sku: "VNT-TCTO-XL" },
+    ],
   },
   {
     id: "vector-storm-shell",
@@ -58,6 +70,12 @@ export const products: Product[] = [
     backdrop: "sunset",
     href: "/products/vector-storm-shell",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-VCTSS-S" },
+      { size: "M", sku: "VNT-VCTSS-M" },
+      { size: "L", sku: "VNT-VCTSS-L" },
+      { size: "XL", sku: "VNT-VCTSS-XL" },
+    ],
   },
   {
     id: "grid-bomber-04",
@@ -74,6 +92,12 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/grid-bomber-04",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-GRDB04-S" },
+      { size: "M", sku: "VNT-GRDB04-M" },
+      { size: "L", sku: "VNT-GRDB04-L" },
+      { size: "XL", sku: "VNT-GRDB04-XL" },
+    ],
   },
   {
     id: "monsoon-hardshell",
@@ -90,6 +114,12 @@ export const products: Product[] = [
     href: "/products/monsoon-hardshell",
     codAvailable: true,
     badge: "NEW",
+    variants: [
+      { size: "S", sku: "VNT-MNSH-S" },
+      { size: "M", sku: "VNT-MNSH-M" },
+      { size: "L", sku: "VNT-MNSH-L" },
+      { size: "XL", sku: "VNT-MNSH-XL" },
+    ],
   },
   {
     id: "ridgeline-coach-jacket",
@@ -105,6 +135,12 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/ridgeline-coach-jacket",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-RDGCJ-S" },
+      { size: "M", sku: "VNT-RDGCJ-M" },
+      { size: "L", sku: "VNT-RDGCJ-L" },
+      { size: "XL", sku: "VNT-RDGCJ-XL" },
+    ],
   },
   {
     id: "signal-track-jacket",
@@ -121,6 +157,12 @@ export const products: Product[] = [
     backdrop: "sunset",
     href: "/products/signal-track-jacket",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-SGNTJ-S" },
+      { size: "M", sku: "VNT-SGNTJ-M" },
+      { size: "L", sku: "VNT-SGNTJ-L" },
+      { size: "XL", sku: "VNT-SGNTJ-XL" },
+    ],
   },
   {
     id: "carbon-moto-shell",
@@ -137,6 +179,12 @@ export const products: Product[] = [
     href: "/products/carbon-moto-shell",
     codAvailable: false,
     badge: "LOW STOCK",
+    variants: [
+      { size: "S", sku: "VNT-CRBMS-S" },
+      { size: "M", sku: "VNT-CRBMS-M" },
+      { size: "L", sku: "VNT-CRBMS-L" },
+      { size: "XL", sku: "VNT-CRBMS-XL" },
+    ],
   },
   {
     id: "delta-windbreaker",
@@ -152,6 +200,12 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/delta-windbreaker",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-DLTW-S" },
+      { size: "M", sku: "VNT-DLTW-M" },
+      { size: "L", sku: "VNT-DLTW-L" },
+      { size: "XL", sku: "VNT-DLTW-XL" },
+    ],
   },
   {
     id: "anchor-work-jacket",
@@ -167,6 +221,12 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/anchor-work-jacket",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-ANCWJ-S" },
+      { size: "M", sku: "VNT-ANCWJ-M" },
+      { size: "L", sku: "VNT-ANCWJ-L" },
+      { size: "XL", sku: "VNT-ANCWJ-XL" },
+    ],
   },
   {
     id: "static-puffer-02",
@@ -183,6 +243,12 @@ export const products: Product[] = [
     backdrop: "sunset",
     href: "/products/static-puffer-02",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-STCP02-S" },
+      { size: "M", sku: "VNT-STCP02-M" },
+      { size: "L", sku: "VNT-STCP02-L" },
+      { size: "XL", sku: "VNT-STCP02-XL" },
+    ],
   },
   {
     id: "meridian-trench",
@@ -198,6 +264,12 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/meridian-trench",
     codAvailable: false,
+    variants: [
+      { size: "S", sku: "VNT-MRDT-S" },
+      { size: "M", sku: "VNT-MRDT-M" },
+      { size: "L", sku: "VNT-MRDT-L" },
+      { size: "XL", sku: "VNT-MRDT-XL" },
+    ],
   },
   {
     id: "series-026-field-parka",
@@ -213,6 +285,12 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/series-026-field-parka",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-SRS026FP-S" },
+      { size: "M", sku: "VNT-SRS026FP-M" },
+      { size: "L", sku: "VNT-SRS026FP-L" },
+      { size: "XL", sku: "VNT-SRS026FP-XL" },
+    ],
   },
   {
     id: "longline-snorkel-parka",
@@ -228,6 +306,12 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/longline-snorkel-parka",
     codAvailable: false,
+    variants: [
+      { size: "S", sku: "VNT-LNGSP-S" },
+      { size: "M", sku: "VNT-LNGSP-M" },
+      { size: "L", sku: "VNT-LNGSP-L" },
+      { size: "XL", sku: "VNT-LNGSP-XL" },
+    ],
   },
   {
     id: "basalt-insulated-parka",
@@ -245,6 +329,12 @@ export const products: Product[] = [
     href: "/products/basalt-insulated-parka",
     codAvailable: true,
     badge: "NEW",
+    variants: [
+      { size: "S", sku: "VNT-BSLIP-S" },
+      { size: "M", sku: "VNT-BSLIP-M" },
+      { size: "L", sku: "VNT-BSLIP-L" },
+      { size: "XL", sku: "VNT-BSLIP-XL" },
+    ],
   },
   {
     id: "transit-fishtail-parka",
@@ -260,6 +350,12 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/transit-fishtail-parka",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-TRNFP-S" },
+      { size: "M", sku: "VNT-TRNFP-M" },
+      { size: "L", sku: "VNT-TRNFP-L" },
+      { size: "XL", sku: "VNT-TRNFP-XL" },
+    ],
   },
   {
     id: "nimbus-down-parka",
@@ -275,6 +371,12 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/nimbus-down-parka",
     codAvailable: false,
+    variants: [
+      { size: "S", sku: "VNT-NMBDP-S" },
+      { size: "M", sku: "VNT-NMBDP-M" },
+      { size: "L", sku: "VNT-NMBDP-L" },
+      { size: "XL", sku: "VNT-NMBDP-XL" },
+    ],
   },
   {
     id: "sector-rain-parka",
@@ -290,6 +392,12 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/sector-rain-parka",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-SCTRP-S" },
+      { size: "M", sku: "VNT-SCTRP-M" },
+      { size: "L", sku: "VNT-SCTRP-L" },
+      { size: "XL", sku: "VNT-SCTRP-XL" },
+    ],
   },
   {
     id: "halo-thermal-parka",
@@ -306,6 +414,12 @@ export const products: Product[] = [
     href: "/products/halo-thermal-parka",
     codAvailable: true,
     badge: "LOW STOCK",
+    variants: [
+      { size: "S", sku: "VNT-HLTP-S" },
+      { size: "M", sku: "VNT-HLTP-M" },
+      { size: "L", sku: "VNT-HLTP-L" },
+      { size: "XL", sku: "VNT-HLTP-XL" },
+    ],
   },
   {
     id: "ballast-utility-parka",
@@ -322,6 +436,12 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/ballast-utility-parka",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-BLSUP-S" },
+      { size: "M", sku: "VNT-BLSUP-M" },
+      { size: "L", sku: "VNT-BLSUP-L" },
+      { size: "XL", sku: "VNT-BLSUP-XL" },
+    ],
   },
   {
     id: "baseline-heavy-tee",
@@ -337,6 +457,12 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/baseline-heavy-tee",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-BSLHT-S" },
+      { size: "M", sku: "VNT-BSLHT-M" },
+      { size: "L", sku: "VNT-BSLHT-L" },
+      { size: "XL", sku: "VNT-BSLHT-XL" },
+    ],
   },
   {
     id: "grid-long-sleeve",
@@ -352,6 +478,12 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/grid-long-sleeve",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-GRDLS-S" },
+      { size: "M", sku: "VNT-GRDLS-M" },
+      { size: "L", sku: "VNT-GRDLS-L" },
+      { size: "XL", sku: "VNT-GRDLS-XL" },
+    ],
   },
   {
     id: "vantablack-hoodie",
@@ -369,6 +501,12 @@ export const products: Product[] = [
     href: "/products/vantablack-hoodie",
     codAvailable: true,
     badge: "NEW",
+    variants: [
+      { size: "S", sku: "VNT-VNTH-S" },
+      { size: "M", sku: "VNT-VNTH-M" },
+      { size: "L", sku: "VNT-VNTH-L" },
+      { size: "XL", sku: "VNT-VNTH-XL" },
+    ],
   },
   {
     id: "signal-crewneck",
@@ -384,6 +522,12 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/signal-crewneck",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-SGNC-S" },
+      { size: "M", sku: "VNT-SGNC-M" },
+      { size: "L", sku: "VNT-SGNC-L" },
+      { size: "XL", sku: "VNT-SGNC-XL" },
+    ],
   },
   {
     id: "ripstop-overshirt",
@@ -399,6 +543,12 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/ripstop-overshirt",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-RPSO-S" },
+      { size: "M", sku: "VNT-RPSO-M" },
+      { size: "L", sku: "VNT-RPSO-L" },
+      { size: "XL", sku: "VNT-RPSO-XL" },
+    ],
   },
   {
     id: "terrain-half-zip",
@@ -414,6 +564,12 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/terrain-half-zip",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-TRNHZ-S" },
+      { size: "M", sku: "VNT-TRNHZ-M" },
+      { size: "L", sku: "VNT-TRNHZ-L" },
+      { size: "XL", sku: "VNT-TRNHZ-XL" },
+    ],
   },
   {
     id: "static-mock-neck",
@@ -429,6 +585,12 @@ export const products: Product[] = [
     backdrop: "sunset",
     href: "/products/static-mock-neck",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-STCMN-S" },
+      { size: "M", sku: "VNT-STCMN-M" },
+      { size: "L", sku: "VNT-STCMN-L" },
+      { size: "XL", sku: "VNT-STCMN-XL" },
+    ],
   },
   {
     id: "cadence-rugby",
@@ -445,6 +607,12 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/cadence-rugby",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-CDNR-S" },
+      { size: "M", sku: "VNT-CDNR-M" },
+      { size: "L", sku: "VNT-CDNR-L" },
+      { size: "XL", sku: "VNT-CDNR-XL" },
+    ],
   },
   {
     id: "origin-boxy-tee",
@@ -460,6 +628,12 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/origin-boxy-tee",
     codAvailable: true,
+    variants: [
+      { size: "S", sku: "VNT-ORGBT-S" },
+      { size: "M", sku: "VNT-ORGBT-M" },
+      { size: "L", sku: "VNT-ORGBT-L" },
+      { size: "XL", sku: "VNT-ORGBT-XL" },
+    ],
   },
   {
     id: "thermal-base-layer",
@@ -476,6 +650,12 @@ export const products: Product[] = [
     href: "/products/thermal-base-layer",
     codAvailable: true,
     badge: "LOW STOCK",
+    variants: [
+      { size: "S", sku: "VNT-THRBL-S" },
+      { size: "M", sku: "VNT-THRBL-M" },
+      { size: "L", sku: "VNT-THRBL-L" },
+      { size: "XL", sku: "VNT-THRBL-XL" },
+    ],
   },
   {
     id: "vector-cargo-pant",
@@ -491,6 +671,14 @@ export const products: Product[] = [
     backdrop: "sunset",
     href: "/products/vector-cargo-pant",
     codAvailable: true,
+    variants: [
+      { size: "28", sku: "VNT-VCTCP-28" },
+      { size: "30", sku: "VNT-VCTCP-30" },
+      { size: "32", sku: "VNT-VCTCP-32" },
+      { size: "34", sku: "VNT-VCTCP-34" },
+      { size: "36", sku: "VNT-VCTCP-36" },
+      { size: "38", sku: "VNT-VCTCP-38" },
+    ],
   },
   {
     id: "transit-track-pant",
@@ -506,6 +694,14 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/transit-track-pant",
     codAvailable: true,
+    variants: [
+      { size: "28", sku: "VNT-TRNTP-28" },
+      { size: "30", sku: "VNT-TRNTP-30" },
+      { size: "32", sku: "VNT-TRNTP-32" },
+      { size: "34", sku: "VNT-TRNTP-34" },
+      { size: "36", sku: "VNT-TRNTP-36" },
+      { size: "38", sku: "VNT-TRNTP-38" },
+    ],
   },
   {
     id: "anchor-work-pant",
@@ -521,6 +717,14 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/anchor-work-pant",
     codAvailable: true,
+    variants: [
+      { size: "28", sku: "VNT-ANCWP-28" },
+      { size: "30", sku: "VNT-ANCWP-30" },
+      { size: "32", sku: "VNT-ANCWP-32" },
+      { size: "34", sku: "VNT-ANCWP-34" },
+      { size: "36", sku: "VNT-ANCWP-36" },
+      { size: "38", sku: "VNT-ANCWP-38" },
+    ],
   },
   {
     id: "ripstop-utility-short",
@@ -537,6 +741,14 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/ripstop-utility-short",
     codAvailable: true,
+    variants: [
+      { size: "28", sku: "VNT-RPSUS-28" },
+      { size: "30", sku: "VNT-RPSUS-30" },
+      { size: "32", sku: "VNT-RPSUS-32" },
+      { size: "34", sku: "VNT-RPSUS-34" },
+      { size: "36", sku: "VNT-RPSUS-36" },
+      { size: "38", sku: "VNT-RPSUS-38" },
+    ],
   },
   {
     id: "meridian-wide-leg",
@@ -553,6 +765,14 @@ export const products: Product[] = [
     href: "/products/meridian-wide-leg",
     codAvailable: true,
     badge: "NEW",
+    variants: [
+      { size: "28", sku: "VNT-MRDWL-28" },
+      { size: "30", sku: "VNT-MRDWL-30" },
+      { size: "32", sku: "VNT-MRDWL-32" },
+      { size: "34", sku: "VNT-MRDWL-34" },
+      { size: "36", sku: "VNT-MRDWL-36" },
+      { size: "38", sku: "VNT-MRDWL-38" },
+    ],
   },
   {
     id: "basalt-denim",
@@ -568,6 +788,14 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/basalt-denim",
     codAvailable: true,
+    variants: [
+      { size: "28", sku: "VNT-BSLD-28" },
+      { size: "30", sku: "VNT-BSLD-30" },
+      { size: "32", sku: "VNT-BSLD-32" },
+      { size: "34", sku: "VNT-BSLD-34" },
+      { size: "36", sku: "VNT-BSLD-36" },
+      { size: "38", sku: "VNT-BSLD-38" },
+    ],
   },
   {
     id: "signal-jogger",
@@ -583,6 +811,14 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/signal-jogger",
     codAvailable: true,
+    variants: [
+      { size: "28", sku: "VNT-SGNJ-28" },
+      { size: "30", sku: "VNT-SGNJ-30" },
+      { size: "32", sku: "VNT-SGNJ-32" },
+      { size: "34", sku: "VNT-SGNJ-34" },
+      { size: "36", sku: "VNT-SGNJ-36" },
+      { size: "38", sku: "VNT-SGNJ-38" },
+    ],
   },
   {
     id: "grid-pleated-trouser",
@@ -599,6 +835,14 @@ export const products: Product[] = [
     backdrop: "orange",
     href: "/products/grid-pleated-trouser",
     codAvailable: false,
+    variants: [
+      { size: "28", sku: "VNT-GRDPT-28" },
+      { size: "30", sku: "VNT-GRDPT-30" },
+      { size: "32", sku: "VNT-GRDPT-32" },
+      { size: "34", sku: "VNT-GRDPT-34" },
+      { size: "36", sku: "VNT-GRDPT-36" },
+      { size: "38", sku: "VNT-GRDPT-38" },
+    ],
   },
   {
     id: "modular-utility-rig",
@@ -615,6 +859,9 @@ export const products: Product[] = [
     href: "/products/modular-utility-rig",
     codAvailable: true,
     badge: "LOW STOCK",
+    variants: [
+      { size: "One Size", sku: "VNT-MDLUR-ONESIZE" },
+    ],
   },
   {
     id: "field-sling-02",
@@ -630,6 +877,9 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/field-sling-02",
     codAvailable: true,
+    variants: [
+      { size: "One Size", sku: "VNT-FLDS02-ONESIZE" },
+    ],
   },
   {
     id: "transit-duffel-40l",
@@ -646,6 +896,9 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/transit-duffel-40l",
     codAvailable: true,
+    variants: [
+      { size: "One Size", sku: "VNT-TRND40L-ONESIZE" },
+    ],
   },
   {
     id: "grid-backpack-22l",
@@ -662,6 +915,9 @@ export const products: Product[] = [
     href: "/products/grid-backpack-22l",
     codAvailable: true,
     badge: "NEW",
+    variants: [
+      { size: "One Size", sku: "VNT-GRDB22L-ONESIZE" },
+    ],
   },
   {
     id: "anchor-tote",
@@ -677,6 +933,9 @@ export const products: Product[] = [
     backdrop: "sunset",
     href: "/products/anchor-tote",
     codAvailable: true,
+    variants: [
+      { size: "One Size", sku: "VNT-ANCT-ONESIZE" },
+    ],
   },
   {
     id: "static-crossbody",
@@ -692,6 +951,9 @@ export const products: Product[] = [
     backdrop: "graphite",
     href: "/products/static-crossbody",
     codAvailable: true,
+    variants: [
+      { size: "One Size", sku: "VNT-STCC-ONESIZE" },
+    ],
   },
   {
     id: "meridian-waist-pack",
@@ -708,6 +970,9 @@ export const products: Product[] = [
     backdrop: "red",
     href: "/products/meridian-waist-pack",
     codAvailable: true,
+    variants: [
+      { size: "One Size", sku: "VNT-MRDWP-ONESIZE" },
+    ],
   },
 ];
 
