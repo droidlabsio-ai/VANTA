@@ -13,12 +13,24 @@
  * Safe to run twice: it refuses to overwrite content that is already in the
  * database unless `--force` is passed.
  */
-import "dotenv/config";
-
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { config as loadEnv } from "dotenv";
 import { PrismaClient } from "../lib/generated/prisma/client";
+
+/**
+ * `.env.local` first, then `.env`, neither overriding a variable already
+ * exported in the shell — the order `prisma.config.ts` uses, for the same
+ * reason. `tsx` loads no env file of its own, and this project keeps its
+ * variables in `.env.local`.
+ *
+ * This used to be `import "dotenv/config"`, which reads `.env` alone. With no
+ * `.env` in the project the import stopped at "DATABASE_URL is not set" every
+ * time, however correctly the database was configured.
+ */
+loadEnv({ path: ".env.local", quiet: true });
+loadEnv({ quiet: true });
 
 const STORE_PATH =
   process.env.CONTENT_STORE_PATH ?? path.join(process.cwd(), ".content", "site.json");
