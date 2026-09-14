@@ -8,6 +8,10 @@ import { ImagePicker } from "./ImagePicker";
 import { Button, Field, Select, TextArea, TextInput, Toggle } from "./ui";
 import { CloseIcon } from "./AdminIcons";
 import { formatINR } from "@/lib/format";
+import { sizesFor, variantsOf } from "@/lib/variants";
+// Sizes for a new product, and the rule that they are created at save and
+// never rewritten, live in lib/ so they can be tested without the admin.
+import { FALLBACK_SIZES, planSizes, withSizes } from "@/lib/productSizes";
 
 /** Badge values currently in use. `badge` is a free-form string in the schema, so
  *  presets are a convenience — "Custom…" keeps the full range the type allows. */
@@ -65,6 +69,32 @@ export function ProductDrawer({
 
   const patch = (p: Partial<Product>) => setDraft({ ...draft, ...p });
 
+  // Sizes: what the product already has, or what saving would give it.
+  const existingSizes = variantsOf(draft);
+  const hasSizes = existingSizes.length > 0;
+  const planned = hasSizes ? null : planSizes(draft);
+  const shownSizes = hasSizes ? existingSizes : (planned?.variants ?? []);
+  const categoryName =
+    categories.find((c) => c.id === draft.categoryId)?.name ?? draft.categoryId;
+  // A stored single fallback size on a category with no size set means the
+  // fallback applied when the product was created; say so then too.
+  const fallbackApplied = hasSizes
+    ? existingSizes.length === 1 &&
+      existingSizes[0].size === FALLBACK_SIZES[0] &&
+      Boolean(draft.categoryId) &&
+      sizesFor(draft.categoryId) === undefined
+    : planned?.fallback === true;
+  const createdWhen = isNew ? "when you add the product" : "when you save";
+  const sizesHint = hasSizes
+    ? fallbackApplied
+      ? `${categoryName} has no size set defined, so this product has a single size. It stays as it is if you rename the product or change its category.`
+      : "Set from the product's category when it was created. They stay as they are if you rename the product or change its category."
+    : planned
+      ? planned.fallback
+        ? `${categoryName} has no size set defined, so this product will have a single size. Created ${createdWhen}.`
+        : `From ${categoryName}. Created ${createdWhen}, with codes built from the product ID.`
+      : undefined;
+
   return (
     <>
       <div
@@ -105,6 +135,13 @@ export function ProductDrawer({
               value={draft.name}
               onChange={(e) => {
                 const name = e.target.value;
+                // Only a new product's id follows its name, and only until it is
+                // saved: sizes are created at save (`withSizes`) from the final
+                // id, so a half-typed name never becomes a SKU. An existing
+                // product's id never changes here, and neither do its sizes —
+                // once a product has SKUs they are kept even when a rename means
+                // they no longer read like its name. That mismatch is correct
+                // (§41). Do not "fix" it by regenerating them.
                 patch(
                   isNew
                     ? { name, id: slugify(name), href: `/products/${slugify(name)}` }
@@ -137,6 +174,31 @@ export function ProductDrawer({
                 </option>
               ))}
             </Select>
+          </Field>
+
+          {/* Read-only. Sizes follow the category (§41) and there is no size
+              editor: this shows what the product is, or will be, sold in, and
+              says so plainly when the category had no sizes to give. */}
+          <Field label="Sizes" note={hasSizes ? "Set" : "Auto"} hint={sizesHint}>
+            {shownSizes.length > 0 ? (
+              <ul aria-label="Sizes" className="flex flex-wrap gap-1.5">
+                {shownSizes.map((v) => (
+                  <li
+                    key={v.sku}
+                    className="rounded-lg border border-admin-border bg-admin-surface px-2.5 py-1 text-xs text-admin-ink"
+                  >
+                    <span className="font-semibold">{v.size}</span>
+                    <span className="ml-1.5 font-mono text-[11px] text-admin-muted">{v.sku}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="rounded-lg border border-dashed border-admin-border px-3 py-2 text-xs text-admin-muted">
+                {draft.categoryId
+                  ? "Name the product to see its sizes."
+                  : "Choose a category to see this product's sizes."}
+              </p>
+            )}
           </Field>
 
           <Field
@@ -284,7 +346,7 @@ export function ProductDrawer({
             <Button
               variant="primary"
               disabled={!draft.name.trim() || !draft.id}
-              onClick={() => onSave(draft)}
+              onClick={() => onSave(withSizes(draft))}
             >
               {isNew ? "Add product" : "Save changes"}
             </Button>
@@ -311,8 +373,8 @@ export const blankProduct = (): Product => ({
   backdrop: "red",
   href: "",
   codAvailable: true,
-  // No sizes yet: the drawer has no variant editor until a later stage. A
-  // product saved like this is refused at publish ("needs at least one size")
-  // rather than going live unbuyable.
+  // No sizes here, deliberately: a blank product has no id or category yet,
+  // and a SKU built from an empty id would be stored. The drawer creates them
+  // from the category when the product is first saved — see `withSizes`.
   variants: [],
 });
