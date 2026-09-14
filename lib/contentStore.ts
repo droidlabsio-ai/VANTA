@@ -13,6 +13,7 @@ import { homepage as seedHomepage } from "@/data/homepage";
 import { collectionPage as seedCollectionPage } from "@/data/collectionPage";
 import { products as seedProducts } from "@/data/products";
 import { PrismaContentStore } from "@/lib/prismaContentStore";
+import { withSizes } from "@/lib/productSizes";
 import type { CollectionPageContent, HomepageContent, Product } from "@/data/types";
 
 /**
@@ -81,24 +82,68 @@ export function seedContent(): SiteContent {
 }
 
 /**
- * Fills in top-level keys a stored document predates.
+ * Fills in what a stored document predates.
  *
- * The store is a document written by an earlier version of this code, so it
- * can be missing a section the schema has since grown — as it was when
- * `collectionPage` was added. Merging the seed for what is absent means the
- * schema can gain a section without a hand-run migration, and without the
- * admin refusing to load until someone performs one.
+ * The store holds a document written by an earlier version of this code, so it
+ * can be missing something the schema has since grown. Filling it here means the
+ * schema can grow without a hand-run migration, and without the admin refusing
+ * to load until someone performs one. Two things are filled:
  *
- * Only whole missing keys are filled. Anything present is left exactly as
- * stored, so this can never quietly overwrite published content.
+ * - **A whole top-level section**, taken from the seed — as when
+ *   `collectionPage` was added (§20).
+ * - **`variants` on a product that has none**, whether the key is missing or
+ *   the list is empty (§42). Taken from the seed product with the same id,
+ *   whose SKUs were generated once, checked and frozen (§41); for a product the
+ *   seed does not know — one created in /admin later — derived from its
+ *   category by `withSizes`, the rule a new product gets in the drawer.
+ *
+ * This used to promise that only whole missing keys are filled. It now reaches
+ * into a product, so the guarantee is narrower, and it still holds: **nothing
+ * that is present is replaced.** A section that exists is left as stored. A
+ * product that already has sizes keeps them exactly — never regenerated, never
+ * given new SKUs. No other field of any product is touched. The only field
+ * written inside a product is one whose absence the strict schema rejects
+ * outright, so what this fills is content that could not have been published
+ * as it stood.
+ *
+ * Every read of both adapters, published and draft, goes through here, so the
+ * next publish writes the filled-in document back and the stored copy stops
+ * needing it.
  */
 function withDefaults(stored: Partial<SiteContent>): SiteContent {
   const seed = seedContent();
   return {
     homepage: stored.homepage ?? seed.homepage,
     collectionPage: stored.collectionPage ?? seed.collectionPage,
-    products: stored.products ?? seed.products,
+    products: stored.products ? backfillVariants(stored.products, seed.products) : seed.products,
   };
+}
+
+/**
+ * Gives sizes to stored products that have none, and leaves every other
+ * product — and every other field — exactly as it was. See `withDefaults`.
+ *
+ * Synchronous and free of I/O on purpose: it runs on every read, and nothing
+ * here may reach for a database or the filesystem.
+ */
+function backfillVariants(stored: Product[], seedProducts: Product[]): Product[] {
+  const seedById = new Map(seedProducts.map((p) => [p.id, p]));
+  return stored.map((product) => {
+    // A stored document can predate the field entirely, whatever the type says.
+    const variants = (product as Partial<Product>).variants;
+    if (Array.isArray(variants) && variants.length > 0) return product;
+
+    const fromSeed = seedById.get(product.id);
+    if (fromSeed && fromSeed.variants.length > 0) {
+      return { ...product, variants: fromSeed.variants };
+    }
+
+    // Not in the seed: the same rule a new product is saved with. With no id or
+    // no category there is nothing to build from, and the product is returned
+    // as stored rather than gaining an empty list it did not have.
+    const derived = withSizes({ ...product, variants: [] });
+    return derived.variants.length > 0 ? derived : product;
+  });
 }
 
 /**
