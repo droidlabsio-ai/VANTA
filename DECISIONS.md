@@ -835,9 +835,15 @@ than naming the mechanism — "Products marked NEW", not "badge === NEW".
 document is written by an earlier version of this code and can predate a
 section the schema has since grown, exactly as it did here. Merging means the
 schema can gain a section without a hand-run migration and without the admin
-refusing to load until someone performs one. Only whole missing keys are
+refusing to load until someone performs one. ~~Only whole missing keys are
 filled — anything present is left exactly as stored, so it can never quietly
-overwrite published content.
+overwrite published content.~~
+
+> **Amended by §42.** Reads now also fill `variants` on a stored product that
+> has none — from the seed product with the same id, or from its category — so
+> "only whole missing keys" is no longer the whole truth. The guarantee that
+> survives is narrower: nothing that is present is replaced, and the only field
+> written inside a product is one whose absence the strict schema rejects.
 
 ### `read()` retries once on a parse failure
 
@@ -3468,14 +3474,24 @@ product's `variants` from the seed onto the published document, matched by id:
 all 45 ids matched, the result passed the strict schema, and the admin edits in
 that document survived. That was done by a throwaway script and imported with
 `npm run content:import`; neither the script nor the merged document is in the
-repository. Production is reported to have no published row at all, so it
+repository. ~~Production is reported to have no published row at all, so it
 serves the seed, which already carries variants — reported by the operator and
-not verified from here.
+not verified from here.~~
+
+> **Wrong — see §42.** Deploying `a6abf5e` showed production reading a stored
+> document that predates variants, not the seed: the size picker's code is in
+> the JavaScript it serves, and none of its products has sizes. The signals
+> this rested on fitted both explanations.
 
 **The `?? []` can be removed only once no environment holds a published or
 draft document without variants**, checked per environment rather than assumed
 — and it has to go before the bag starts carrying a SKU, because from then on
 "no variants" can no longer mean "behave as before".
+
+> **Condition changed by §42.** That could never be checked for production,
+> whose database cannot be reached. Every read through the store now backfills
+> `variants`, so the `?? []` is a guard rather than what keeps old documents
+> rendering, and it can go with the bag work once §42 is deployed.
 
 ### The size picker is a set of radio buttons
 
@@ -3568,6 +3584,125 @@ Three things are worth recording as they actually happened:
   Still owed: there is no size editor, so a product's sizes cannot be changed
   after creation except by editing the content document directly.
 - **`variantsOf()`'s tolerance**, until the condition above is met.
+
+## 42. Reads backfill variants, because production's document predates them
+
+A new section rather than a subsection of §41. §41 records the variants model;
+this changes the contract of `withDefaults`, the one function every read of
+the content store passes through (§20). A contract change filed under a
+feature is where the next reader would not look for it.
+
+### What the deploy showed
+
+`main` at `a6abf5e` was deployed, carrying a seed with 175 variants and Vector
+Storm Shell's `compareAtPrice: 12999`. Production showed none of it: no size
+picker, no ₹12,999, twelve products on `/collections/sale`.
+
+Two explanations fit that, and they are worth separating because the first
+one had been assumed. The deploy might not have landed; or production reads a
+stored document written before variants existed. The first was ruled out
+directly: the JavaScript production serves for a product page contains the
+size picker's own strings — "Select a size", "Crossed-out sizes are sold out",
+`radiogroup` — while its HTML contains none of them (fetched 2026-09-14). The
+new code is live and rendering products that have no sizes.
+
+So production holds a published `ContentDocument` row that predates variants,
+and whose content happens to match the old seed. §41 recorded, as the
+operator's report, that production had no published row and served the seed.
+That was wrong, and it is amended there. The three signals it rested on — a red
+hero, Free Shipping first, a NEW badge on Apex — were predicted equally by both
+explanations; only the deploy told them apart. It is §31 again, from the other
+side: the seed says nothing about a site that has published.
+
+The consequence is inferred, not observed: production `/admin` cannot publish.
+The admin loads the stored document, every product in it lacks `variants`, and
+the strict schema refuses the whole document on the type — 45 issues against a
+document of that shape, measured on this machine's pre-variant copy. Draft
+autosave fails the same way, because a missing field is a shape error.
+
+### Why the fix travels in the code
+
+A database migration was the obvious alternative, and it is not available:
+Vercel holds production's `DATABASE_URL` write-only, so nothing outside the
+deployment can reach that row. Even if it could, a migration fixes the one
+database it is pointed at. A change to the read path reaches every environment
+at once — production, previews, every local store, and any copy nobody
+remembers — the moment it is deployed, with nothing to run by hand.
+
+### What `withDefaults` now does
+
+For each stored product whose `variants` is missing or empty:
+
+1. **The seed product with the same id supplies them**, copied as they are.
+   The seed's SKUs were generated once, checked and frozen (§41), and a stored
+   product that shares a seed id is the same product.
+2. **A product the seed does not know** — one created in `/admin` after the seed
+   was written — gets sizes from its category through `withSizes`, the rule a
+   new product is saved with (§41). Not a second implementation of it. With no
+   id or no category there is nothing to build from, and the product is returned
+   as stored, without an empty list it did not have.
+3. **A product that already has variants is left exactly as it is**, whether or
+   not they match the seed. Never overwritten, never re-SKU'd.
+
+An empty list is treated as a missing one. The strict schema rejects both, so
+neither can be published as it stands.
+
+### The contract §20 gave, and what is left of it
+
+§20 promised that only whole missing keys are filled and that anything present
+is left exactly as stored. The first half is no longer true — a product is now
+reached into — and §20 is amended to say so. The guarantee that survives is
+narrower and still worth having: **nothing that is present is replaced.** A
+section that exists is kept; a product's existing sizes are kept; no other
+field of any product is touched; and the only field written is one whose
+absence the strict schema rejects outright.
+
+What is deliberately not backfilled: anything else the seed has that a stored
+document lacks. Vector Storm Shell's ₹12,999 lives in the seed and not in
+production's document, and it stays that way — it is an editorial value, and
+the stored document is the editor's.
+
+### Self-healing, and what changes on deploy
+
+The storefront changes the moment this is deployed, with no publish: every
+read is backfilled, so size pickers appear on production's products. The
+stored row does not change. It heals on the next publish, because the admin
+loads its baseline through the same read, holds the filled-in products, and
+publishing writes them back. After that the backfill finds nothing to do.
+
+### What it means for `variantsOf()`'s `?? []`
+
+§41 tied removing the tolerance to "no environment holds a document without
+variants", checked per environment. That condition cannot be checked for
+production, which is part of why this change exists. It is also no longer the
+right condition: once this is deployed, no product read through the store
+reaches a page without sizes unless it has neither a seed match nor a category,
+and the strict schema never lets such a product be published. The `?? []` stops
+being what keeps old documents rendering and becomes a guard. It can go with
+the bag work — when a product without sizes has to be an error rather than
+"behave as before" — provided this section has been deployed first.
+
+### Verified, and not
+
+Verified by script, not in production: `.content/site.json.bak` — a real
+pre-variant document — was read through the file adapter's own `read()` and
+`readDraft()`. It came back with 175 variants on all 45 products, each equal to
+the seed's; it passed the strict schema with 0 issues; with `variants` removed
+it was deep-equal to the stored document, orange hero and all; the current seed
+passed through unchanged; a product with custom SKUs kept them; an unknown
+product got its category's sizes, or One Size; and an empty list was filled
+like a missing one.
+
+Not verified: the Postgres adapter, which is handed the same function but was
+not exercised; production's actual document, whose product ids may not all
+match the seed, in which case those products take the derived path; and that
+production `/admin` really cannot publish today, which is still inference.
+
+One tension to resolve later: drafts tolerate an empty size list, so that a list
+being rebuilt can be saved (§39, §41). There is no size editor yet, so an empty
+list in a stored document can only be a pre-variant leftover. When a size
+editor exists, a deliberately emptied draft list would be refilled on the next
+read, and "empty means missing" will need revisiting for drafts.
 
 ## Known issues / follow-ups
 
@@ -3720,12 +3855,13 @@ entry that no longer matches the code, fix the entry in the same change.**
   omitted locally because the site URL is a placeholder, and no product has
   varying prices. Check it once on a deployment with a real site URL and a
   product priced by size. §41.
-- **`variantsOf()` treats a product with no `variants` as having none.** That
-  keeps a published document from before sizes rendering as it always did, and
-  it is temporary. Remove the `?? []` only once no environment holds a published
-  or draft document without variants — checked per environment, not assumed —
-  and before the bag carries a SKU, after which "no variants" can no longer mean
-  "behave as before". §41.
+- **`variantsOf()` still treats a product with no `variants` as having none.**
+  Since §42 every read through the content store backfills `variants`, so a
+  product reaches a page without sizes only if it has neither a seed match nor
+  a category — which the strict schema never lets be published. The `?? []` is
+  now a guard, not what keeps pre-variant documents rendering. Remove it with
+  the bag work, when a product without sizes has to be an error rather than
+  "behave as before", and only once §42 is deployed. §41, §42.
 
 ### Performance
 
