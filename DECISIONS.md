@@ -1200,6 +1200,19 @@ admin login that silently drops its captcha when an environment variable goes
 missing is worse than one that never had it, because everything keeps working
 and nobody finds out until the logs are read months later.
 
+**Automated browsers, and why local admin testing goes around the sign-in.**
+Local development runs on Cloudflare's always-passing test keys (DEPLOY.md
+§1), and they pass in an automation-controlled browser too: the widget read
+"Success!" in the in-app browser pane on 2026-09-14. What stops an agent
+testing `/admin` locally is the sign-in itself — the password is the operator's
+to type, and a session started in one browser does not carry into another. Unsetting
+`TURNSTILE_SECRET_KEY` is **not** a way round it: `app/admin/login/actions.ts`
+refuses every admin sign-in when it is unset, before the password is checked —
+the fail-closed rule above — and only the customer forms skip the check
+(`verifyTurnstileIfConfigured`). Logic that sits behind the admin is tested by
+calling it directly instead, as §41 records for new products' sizes. Whether
+the production keys refuse automation-controlled browsers was not tested.
+
 ### Revocable admin sessions, without giving up the Edge check
 
 The token now carries a session id, and `AdminSession` is a row.
@@ -3516,9 +3529,44 @@ Three things are worth recording as they actually happened:
   has varying prices.
 - **There is no stock table.** `lib/stock.ts` says everything is in stock
   because nothing else can be true yet.
-- **A product created in `/admin` cannot be published.** The drawer's blank
-  product has `variants: []`, and publishing requires at least one size. There
-  is no size editor.
+- **A product created in `/admin` is given its category's sizes when it is
+  first saved, and keeps them.** `withSizes` in `lib/productSizes.ts` builds one
+  variant per size from `sizesFor(categoryId)`, each SKU `makeSku(id, size)`,
+  with no per-size price. It was moved out of the drawer so the rule could be
+  tested without an admin session. For a test product, "Probe Field Jacket",
+  Jackets gave S, M, L and XL as `VNT-PRBFJ-S` to `VNT-PRBFJ-XL`, Pants gave 28
+  to 38, and Bags gave One Size.
+
+  Sizes are created at save, not as fields change. A new product's id follows
+  its name on every keystroke, so generating as the editor types would store
+  SKUs built from a half-typed name — `VNT-N-S` for a product about to be named
+  Nimbus Shell — and the next rule would then keep them. Until the first save
+  the drawer only shows what it will create. A product with no id or no
+  category gets nothing.
+
+  A category with no size set — the Clothing and Accessories groups (§22), or
+  any category created in `/admin` — gives a single "One Size", and the drawer
+  says in words that the category has no size set. That is a fallback so the
+  product can be published, not a size set.
+
+  Existing sizes are never regenerated. Renamed to `nimbus-shell-xyz`, or moved
+  to Pants, the test product kept its four `VNT-PRBFJ-*` variants byte for byte,
+  so a renamed product's SKUs deliberately stop matching its id. SKUs are handed
+  to couriers and invoices, and one that changed with a name would be worse.
+
+  The seed plus the test product passes the strict publish schema. The same
+  document with one of its SKUs changed to Apex's `VNT-APXTS-S` is refused, and
+  the message names Apex — so the uniqueness rule was seen rejecting, not only
+  accepting. Imported into the dev database, `/products/probe-field-jacket`
+  rendered a four-size picker with Add to Bag blocked on "Select a size".
+
+  **All of this was verified by script, not through the admin UI.** The script
+  called `planSizes`, `withSizes` and `siteContentSchema` directly and fetched
+  the public product page. The drawer's wiring — that Save calls `withSizes`,
+  that the Sizes line renders and reads as described — has not been exercised,
+  because the admin could not be signed into from the test environment (§25).
+  Still owed: there is no size editor, so a product's sizes cannot be changed
+  after creation except by editing the content document directly.
 - **`variantsOf()`'s tolerance**, until the condition above is met.
 
 ## Known issues / follow-ups
