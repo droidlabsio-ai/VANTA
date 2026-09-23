@@ -29,6 +29,8 @@ export function RegisterForm({ next }: { next?: string }) {
 
   return (
     <form action={formAction} className="space-y-5">
+      {next && <input type="hidden" name="next" value={next} />}
+
       <Field label="Name" htmlFor="name" error={state.errors.name}>
         <TextInput
           id="name"
@@ -74,7 +76,7 @@ export function RegisterForm({ next }: { next?: string }) {
 
       <FormError message={state.errors.form} />
 
-      <TurnstileWidget action="account-register" />
+      <TurnstileWidget action="account-register" resetKey={state} />
 
       <SubmitButton pendingLabel="Creating account…">Create account</SubmitButton>
 

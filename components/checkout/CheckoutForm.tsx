@@ -5,6 +5,7 @@ import { useBag } from "@/components/BagProvider";
 import { createOrder } from "@/app/checkout/actions";
 import { emptyCheckoutState, type CheckoutFormState } from "@/lib/checkoutSchema";
 import { Field, FormError, SubmitButton, TextInput } from "@/components/account/AccountFormParts";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
 
 export interface SavedAddress {
   id: string;
@@ -73,7 +74,7 @@ export function CheckoutForm({
 
       <section className="space-y-4">
         <h2 className="text-label font-bold uppercase tracking-[0.12em] text-bone/50">Contact</h2>
-        <Field label="Email" htmlFor="email" error={state.errors.email} hint="Where your order confirmation goes.">
+        <Field label="Email" htmlFor="email" error={state.errors.email} hint="Used to contact you about this order.">
           <TextInput
             id="email"
             name="email"
@@ -260,6 +261,10 @@ export function CheckoutForm({
       </section>
 
       <FormError message={formError} />
+
+      {/* Reset after every server answer: the token a submit carried is spent
+          whether the order went through or not (§43). */}
+      <TurnstileWidget action="checkout" resetKey={state} />
 
       <SubmitButton pendingLabel="Placing order…">Place order</SubmitButton>
     </form>

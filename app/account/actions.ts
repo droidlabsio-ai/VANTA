@@ -30,6 +30,7 @@ import {
   recordFailureAll,
 } from "@/lib/rateLimit";
 import { TURNSTILE_FIELD, verifyTurnstileIfConfigured } from "@/lib/turnstile";
+import { safeNextPath } from "@/lib/safeRedirect";
 
 /**
  * Everything a customer can do to their own account.
@@ -177,8 +178,10 @@ export async function registerAction(
   }
 
   // Outside the try: `redirect` works by throwing, and catching it here would
-  // turn a successful signup into an unhandled error.
-  redirect("/account");
+  // turn a successful signup into an unhandled error. Honours `next` like
+  // sign-in does — the form always carried it, and the action ignored it, so
+  // someone who registered from checkout landed on /account instead (§43).
+  redirect(safeNextPath(formData.get("next")));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -229,10 +232,11 @@ export async function signInAction(
   await clearAttemptsAll(keys);
   await createCustomerSession(customer.id);
 
-  const next = String(formData.get("next") ?? "");
   // Only same-site paths. Reflecting an arbitrary URL back into a redirect is
-  // an open redirect, and a sign-in page is exactly where one is useful.
-  redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/account");
+  // an open redirect, and a sign-in page is exactly where one is useful. The
+  // check lives in `lib/safeRedirect.ts` — the inline version here let
+  // `/\evil.com` through (§43).
+  redirect(safeNextPath(formData.get("next")));
 }
 
 export async function signOutAction(): Promise<void> {
@@ -335,18 +339,26 @@ export async function deleteAddressAction(formData: FormData): Promise<void> {
   });
 
   // Deleting the default leaves the account without one. Promote the oldest
-  // survivor rather than leaving checkout with nothing preselected.
+  // survivor rather than leaving checkout with nothing preselected — but only
+  // when no default survives. The earlier version promoted the oldest address
+  // whenever *it* was not the default, so deleting any non-default address
+  // while a newer one was the default left the account with two (§43).
   if (deleted.count > 0) {
-    const remaining = await prisma.address.findFirst({
-      where: { customerId: customer.id },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, isDefault: true },
+    const hasDefault = await prisma.address.count({
+      where: { customerId: customer.id, isDefault: true },
     });
-    if (remaining && !remaining.isDefault) {
-      await prisma.address.update({
-        where: { id: remaining.id },
-        data: { isDefault: true },
+    if (hasDefault === 0) {
+      const oldest = await prisma.address.findFirst({
+        where: { customerId: customer.id },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
       });
+      if (oldest) {
+        await prisma.address.update({
+          where: { id: oldest.id },
+          data: { isDefault: true },
+        });
+      }
     }
   }
 

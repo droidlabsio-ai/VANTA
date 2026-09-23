@@ -55,7 +55,7 @@ export function SignInForm({ next }: { next?: string }) {
 
       <FormError message={state.errors.form} />
 
-      <TurnstileWidget action="account-signin" />
+      <TurnstileWidget action="account-signin" resetKey={state} />
 
       <SubmitButton pendingLabel="Signing in…">Sign in</SubmitButton>
 

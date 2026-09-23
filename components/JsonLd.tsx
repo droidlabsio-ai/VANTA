@@ -20,9 +20,13 @@
  */
 export function JsonLd({ data }: { data: Record<string, unknown> | Record<string, unknown>[] }) {
   const json = JSON.stringify(data)
-    .replace(/</g, "\u003c")
-    .replace(/>/g, "\u003e")
-    .replace(/&/g, "\u0026");
+    // Double backslash on purpose. `"\u003c"` in a JS string literal IS the
+    // character `<`, so the single-backslash version replaced each character
+    // with itself and escaped nothing (§43). `"\\u003c"` is the six characters
+    // backslash-u-0-0-3-c, which is what JSON needs.
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
 
   return (
     <script

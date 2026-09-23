@@ -43,7 +43,7 @@ export function LoginForm() {
         </p>
       )}
 
-      <TurnstileWidget action="admin-login" />
+      <TurnstileWidget action="admin-login" resetKey={state} />
 
 
       <Button type="submit" variant="primary" disabled={pending} className="w-full">

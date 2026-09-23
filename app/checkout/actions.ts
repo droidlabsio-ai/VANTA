@@ -9,6 +9,9 @@ import { fieldErrors } from "@/lib/auth/accountSchema";
 import { generateOrderNumber, guestOrderPath, priceBag } from "@/lib/orders";
 import { COURIER_PUSH, enqueue } from "@/lib/outbox";
 import { createRazorpayOrder, isRazorpayConfigured } from "@/lib/payments/razorpay";
+import { checkAll, rateLimitKey, recordFailureAll } from "@/lib/rateLimit";
+import { TURNSTILE_FIELD, verifyTurnstileIfConfigured } from "@/lib/turnstile";
+import { headers } from "next/headers";
 
 /**
  * Placing an order.
@@ -36,6 +39,40 @@ function parseLines(raw: FormDataEntryValue | null): Array<{ productId: string; 
   } catch {
     return [];
   }
+}
+
+/**
+ * Abuse limits on placing orders (§43).
+ *
+ * Checkout had neither a rate limit nor a captcha, unlike sign-in and
+ * registration. A guest COD order is created CONFIRMED and queued for the
+ * courier with nothing more than a form post, so a script could fill the
+ * orders table and — once Shiprocket is live — book real pickups that end as
+ * return-to-origin charges.
+ *
+ * The limiter is the same Postgres bucket sign-in uses, keyed on IP and on the
+ * email, and here it counts orders *placed* (plus failed captchas) rather than
+ * failed passwords: five in fifteen minutes from one IP or one email, then a
+ * lockout that doubles on repeat. Nobody shopping for themselves places a sixth
+ * order in a quarter of an hour. Fails **open**, like the customer forms: a
+ * database blip must not block a real sale (§25).
+ */
+const CHECKOUT_SCOPE = "checkout";
+const CHECKOUT_FAIL_MODE = "open" as const;
+
+async function clientIp(): Promise<string> {
+  const headerList = await headers();
+  const forwarded = headerList.get("x-forwarded-for");
+  return forwarded?.split(",")[0].trim() ?? headerList.get("x-real-ip") ?? "unknown";
+}
+
+function tooManyOrders(retryAfterSeconds: number): CheckoutFormState {
+  const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+  return {
+    errors: {
+      form: `Too many orders from here in a short time. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}, or contact us if you need to place a large order.`,
+    },
+  };
 }
 
 export async function createOrder(
@@ -77,6 +114,14 @@ export async function createOrder(
 
   if (!parsed.success) return { errors: fieldErrors(parsed.error) };
   const input = parsed.data;
+
+  const ip = await clientIp();
+  const limitKeys = [
+    rateLimitKey.ip(CHECKOUT_SCOPE, ip),
+    rateLimitKey.identifier(CHECKOUT_SCOPE, input.email),
+  ];
+  const limit = await checkAll(limitKeys, CHECKOUT_FAIL_MODE);
+  if (!limit.allowed) return tooManyOrders(limit.retryAfterSeconds);
 
   /**
    * A saved address is resolved scoped to the signed-in customer.
@@ -124,6 +169,24 @@ export async function createOrder(
     };
   }
   if (priced.lines.length === 0) return { errors: { form: "Your bag is empty." } };
+
+  /**
+   * The captcha is checked last, after everything that can be corrected on the
+   * form. A token is single-use: spending it on a submit that then fails on a
+   * phone-number typo would make the retry fail too. Skipped when Turnstile is
+   * not configured, as on the other customer forms, so local development works
+   * without a Cloudflare account.
+   */
+  const captcha = await verifyTurnstileIfConfigured(
+    String(formData.get(TURNSTILE_FIELD) ?? ""),
+    ip === "unknown" ? null : ip,
+  );
+  if (!captcha.ok) {
+    await recordFailureAll(limitKeys, CHECKOUT_FAIL_MODE);
+    return {
+      errors: { form: "Couldn’t verify that you’re human. Please try again." },
+    };
+  }
 
   /**
    * ONLINE stops at PENDING_PAYMENT, and only the webhook moves it on.
@@ -245,6 +308,11 @@ export async function createOrder(
       return { errors: { form: "Couldn’t place your order. Please try again." } };
     }
   }
+
+  // Counted only once the order exists, so a failed attempt does not use up
+  // the allowance. The result is not checked: this order is placed regardless,
+  // and the limit applies to the next one.
+  await recordFailureAll(limitKeys, CHECKOUT_FAIL_MODE);
 
   /**
    * The payment handoff, attempted after the order exists.

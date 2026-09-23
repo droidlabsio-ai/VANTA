@@ -39,11 +39,13 @@ export default function robots(): MetadataRoute.Robots {
     "/wishlist",
     "/api",
     /**
-     * Not a page — Next's data endpoint for client-side navigation. It serves
-     * the same content as the HTML in a format only the router understands, so
-     * every crawl of it is a duplicate fetch of something already crawlable.
+     * `/_next/` is deliberately NOT here (§43). It was, on the reasoning that it
+     * is only Next's client-navigation data endpoint — but the same prefix serves
+     * every CSS and JS chunk (`/_next/static`) and every optimised image
+     * (`/_next/image`). Blocking it stopped Google rendering the pages with their
+     * styles and kept every product photo out of Google Images, since every
+     * `<img>` on the site points at `/_next/image`.
      */
-    "/_next/",
   ];
 
   if (siteUrlIsPlaceholder) {

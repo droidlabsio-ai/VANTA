@@ -42,11 +42,25 @@ const RANK: Record<OrderStatus, number> = {
  * event. Ordered most-specific first — "out for delivery" contains "delivery"
  * and must not be read as delivered.
  */
+/**
+ * Return-to-origin is checked before anything else, and as a whole word.
+ *
+ * It used to sit in the list below *after* "delivered", so "RTO Delivered" —
+ * the parcel arriving back at our warehouse — matched "delivered" first and
+ * told the customer their order had been delivered (§43). An RTO status never
+ * means the customer has it, whatever else the string says. It maps to SHIPPED:
+ * the parcel is still with the courier as far as our state machine is
+ * concerned, and the raw string ("RTO Delivered") is shown to the customer
+ * as-is. Bounded by anything that is not a letter or digit — spaces, `_`, `-`
+ * all occur in courier labels — so a word that merely contains the letters
+ * cannot trip it.
+ */
+const RETURN_TO_ORIGIN = /(?<![a-z0-9])rto(?![a-z0-9])|return(?:ed)?[\s_]+to[\s_]+origin/i;
+
 const RULES: Array<[needle: string, status: OrderStatus]> = [
   ["out for delivery", "SHIPPED"],
   ["undelivered", "SHIPPED"],
   ["delivered", "DELIVERED"],
-  ["rto", "SHIPPED"],
   ["in transit", "SHIPPED"],
   ["shipped", "SHIPPED"],
   ["picked up", "SHIPPED"],
@@ -62,6 +76,10 @@ export function courierStatusToOrderStatus(
 ): OrderStatus | null {
   if (!courierStatus) return null;
   const needle = courierStatus.toLowerCase();
+
+  if (RETURN_TO_ORIGIN.test(courierStatus)) {
+    return RANK.SHIPPED > RANK[current] ? "SHIPPED" : null;
+  }
 
   const match = RULES.find(([text]) => needle.includes(text));
   if (!match) return null;

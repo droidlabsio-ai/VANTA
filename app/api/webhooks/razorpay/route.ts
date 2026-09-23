@@ -308,22 +308,34 @@ export async function POST(request: Request) {
      * It is also what makes a *re-processed* delivery safe, now that one is
      * possible at all.
      */
-    const updated = await prisma.order.updateMany({
-      where: { id: order.id, status: "PENDING_PAYMENT" },
-      data: {
-        status: "CONFIRMED",
-        razorpayPaymentId: facts.paymentId,
-        paidAt: new Date(),
-      },
+    /**
+     * The confirm and the courier job commit together (§43).
+     *
+     * They used to be two statements. If the enqueue failed after the update
+     * committed, Razorpay's redelivery found the order already paid, took the
+     * "already paid" branch below and marked the event processed — a paid order
+     * with no courier job, forever, and nothing on screen to say so. The COD
+     * path in `app/checkout/actions.ts` already did this inside one
+     * transaction; this now matches it.
+     *
+     * Queued rather than pushed: this handler owes Razorpay a fast 2xx, and
+     * Shiprocket being slow or down must not turn a captured payment into a
+     * webhook timeout and a retry storm. See `lib/outbox.ts`.
+     */
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.order.updateMany({
+        where: { id: order.id, status: "PENDING_PAYMENT" },
+        data: {
+          status: "CONFIRMED",
+          razorpayPaymentId: facts.paymentId,
+          paidAt: new Date(),
+        },
+      });
+      if (result.count > 0) await enqueue(COURIER_PUSH, order.id, tx);
+      return result;
     });
 
     if (updated.count > 0) {
-      /**
-       * Now it can ship. Queued rather than pushed: this handler owes Razorpay a
-       * fast 2xx, and Shiprocket being slow or down must not turn a captured
-       * payment into a webhook timeout and a retry storm. See `lib/outbox.ts`.
-       */
-      await enqueue(COURIER_PUSH, order.id);
       await markProcessed();
       return NextResponse.json({ ok: true, updated: updated.count });
     }
@@ -337,12 +349,20 @@ export async function POST(request: Request) {
      */
     const current = await prisma.order.findUnique({
       where: { id: order.id },
-      select: { status: true, paidAt: true },
+      select: { status: true, paidAt: true, shiprocketOrderId: true },
     });
 
     if (current?.paidAt) {
       // Already recorded as paid — by an earlier delivery or by its sibling
       // event. Terminal, and `paidAt` deliberately keeps its original value.
+      //
+      // Make sure it can still ship. An order confirmed before the transaction
+      // above existed may have lost its job; `enqueue` is a no-op when one is
+      // already waiting, and a job for an order that has already been pushed
+      // completes without calling the courier (`pushOrderToCourier`).
+      if (!current.shiprocketOrderId && current.status === "CONFIRMED") {
+        await enqueue(COURIER_PUSH, order.id);
+      }
       await markProcessed();
       return NextResponse.json({ ok: true, updated: 0, alreadyPaid: true });
     }

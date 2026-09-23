@@ -23,6 +23,24 @@ import { saveAccountDataAction, syncAccountDataAction } from "@/app/account/acti
  * moment it knows something the browser does not: what this person's other
  * device did.
  */
+/**
+ * Set by sign-out, before the local bag and wishlist are cleared (§43).
+ *
+ * Signing out empties this browser's copy so the next person on a shared device
+ * neither sees it nor, on signing in, has it merged into *their* account. That
+ * emptying is itself a change this component would dutifully mirror — and
+ * mirroring an empty bag to the server would delete the customer's saved one on
+ * the way out. So sign-out stops the mirror first. Module state, not React
+ * state: it has to be read by the debounced push after the component may have
+ * re-rendered, and it must not survive a reload — if sign-out fails, the next
+ * page load merges the server copy straight back in.
+ */
+let suspended = false;
+
+export function suspendAccountSync(): void {
+  suspended = true;
+}
+
 export function AccountSync() {
   /**
    * Nothing is pushed before the merge has come back. A push in the gap would
@@ -43,7 +61,7 @@ export function AccountSync() {
     });
 
     const push = async () => {
-      if (!merged.current) return;
+      if (!merged.current || suspended) return;
       const payload = snapshot();
       const serialised = JSON.stringify(payload);
       if (serialised === lastSent.current) return;

@@ -3704,6 +3704,132 @@ list in a stored document can only be a pre-variant leftover. When a size
 editor exists, a deliberately emptied draft list would be refilled on the next
 read, and "empty means missing" will need revisiting for drafts.
 
+## 43. Step 1 of the finishing plan: nine safety fixes
+
+Found by the full analysis of 2026-09-23 (`Claude outputs/vanta-full-analysis-2026-09-23.md`),
+none of them in the known-issues list below. Each was reproduced before it was
+fixed, and each fix was checked by a throwaway script against the cases listed.
+No schema change; nothing to migrate.
+
+### Next.js 16.3.1 → 16.3.6
+
+`npm audit` reported one critical advisory against 16.3.1 (GHSA-2xp9-vwfh-vxw4,
+RCE in the image optimiser with AVIF; GHSA-p293-qw3h-jr36, RCE on Windows-hosted
+servers — which includes `next dev` on the development machine). A patch release
+within the pinned minor; `eslint-config-next` moved with it. `npm audit fix` also
+took `js-yaml` to 4.3.2. What remains is four advisories inside the Prisma CLI
+(`deepmerge-ts`, `mysql2`), dev-time only and fixed only by a breaking downgrade,
+so left for Prisma's next release.
+
+The lockfile was regenerated in the same change. The one committed from Windows
+was missing `@emnapi/runtime` and `@emnapi/core`, so `npm ci` refused it on Linux.
+Vercel runs `npm install` and never noticed; any CI using `npm ci` would have.
+Verified: `npm ci` on a clean copy now succeeds.
+
+### `robots.txt` no longer blocks `/_next/`
+
+The rule was there on the belief that `/_next/` is only the client-navigation
+data endpoint. It is also every CSS and JS chunk and every optimised image —
+every product `<img>` on the site is `/_next/image?url=…`, observed on the live
+site. Blocking it kept all product photography out of Google Images and stopped
+Google rendering pages with their styles.
+
+### `JsonLd` escaping did nothing
+
+`.replace(/</g, "\u003c")` with a single backslash: in a JS string literal that
+is the character `<`, so each replace swapped a character for itself. The
+comment above it, and the 7 September audit, both described it as the
+protection it was meant to be. Now `"\\u003c"` in source (six characters on
+the page). Verified by rendering a product name of
+`</script><script>alert(1)</script> & co`: the markup contains no `</script>`
+break, and the JSON parses back to the original string.
+
+### Sign-in `next` was an open redirect
+
+`startsWith("/") && !startsWith("//")` accepted `/\evil.com`. Browsers read a
+backslash as a slash in http(s) URLs, so it resolves to `https://evil.com/`, and
+Next's router follows an external redirect from a server action with a full page
+load. The live login page reflected it into the hidden field (checked
+2026-09-23). `lib/safeRedirect.ts` now parses the value the way a browser will
+and requires the origin to be ours. Checked: `/\evil.com`, `//evil.com`, a
+tab-smuggled `/\t/evil.com`, `https://…`, `javascript:`, empty and missing all
+fall back to `/account`; ordinary paths with query and hash pass through.
+
+Registration now honours `next` through the same helper. The register form had
+always been handed it and never submitted it.
+
+### "RTO Delivered" no longer means delivered
+
+`"delivered"` was matched before `"rto"`, so a parcel arriving back at the
+warehouse told the customer their order had arrived. Return-to-origin is now
+tested first, bounded by any non-alphanumeric character (courier labels use
+spaces, `_` and `-`), and maps to SHIPPED; the raw courier string is still shown
+verbatim. Checked against RTO Delivered / RTO_DELIVERED / RTO Initiated /
+Returned to Origin, plus the existing rules, which are unchanged.
+
+### Checkout has a rate limit and a captcha
+
+Placing an order had neither, unlike sign-in and registration. A guest COD
+order is created CONFIRMED and queued for the courier from a single form post.
+Now: the Postgres limiter keyed on IP and email, counting orders **placed**
+(and failed captchas), five per fifteen minutes before a lockout, fail-open like
+the other customer forms; and Turnstile, verified after every correctable
+validation so a typo does not spend the token. Skipped when Turnstile is
+unconfigured, as the other customer forms are.
+
+`TurnstileWidget` gained a `resetKey`. Tokens are single-use and
+`useActionState` keeps the form mounted, so a second submit after any error
+carried a spent token and failed with "couldn't verify that you're human". The
+widget's own comment said this was handled; it was only handled on unmount. All
+four forms (checkout, sign-in, register, admin login) now pass their action
+state, and the widget resets whenever it changes.
+
+**Not exercised end to end** — Turnstile does not run in the build environment,
+and the in-app browser is refused by it (§25). Worth one real checkout on a
+preview deployment before relying on it.
+
+### A paid order always gets its courier job
+
+The webhook's CONFIRMED update and `enqueue(COURIER_PUSH)` were two statements.
+If the enqueue failed after the update committed, the redelivery took the
+"already paid" branch and marked the event processed: a paid order with no
+courier job and nothing on screen to say so. Both now run in one transaction,
+as the COD path already did. The "already paid" branch also enqueues when a
+CONFIRMED order has not been pushed, which repairs any order that hit the old
+path; `enqueue` is a no-op when a job is already waiting.
+
+### Signing out clears the bag and wishlist in the browser
+
+They are `localStorage` (§21), and signing out only cleared the cookie. The next
+person on a shared device saw them, and signing in merged them into their own
+account through `AccountSync`. `components/account/SignOutButton.tsx` suspends
+the sync first — otherwise emptying the local copy would be mirrored to the
+server as "this customer emptied their bag" — then clears both stores. The
+customer's saved bag stays on the server and returns at their next sign-in. If
+sign-out fails, the next page load merges the server copy straight back.
+
+### Deleting an address could leave two defaults
+
+After any delete the oldest remaining address was promoted whenever it was not
+the default, even when a newer default survived. Now a default is promoted only
+when none remains.
+
+### Also changed
+
+The checkout email field's hint said "Where your order confirmation goes"; no
+confirmation email exists. It now says the address is used to contact the
+customer about the order.
+
+### Deliberately not in this change
+
+- **`middleware.ts` → `proxy.ts`.** Next 16 warns that the convention is
+  deprecated. The rename also changes the default runtime from Edge to Node,
+  which §17 and §25 reason about; that deserves its own change and its own test,
+  not a ride-along in a safety batch.
+- **The rate limiter is still read-then-write** (§25). A burst of parallel
+  attempts can each read the same count. An atomic increment is a small change
+  but touches every caller's semantics.
+
 ## Known issues / follow-ups
 
 Every entry below was re-checked against the code on 2026-09-08. (The date read
@@ -3906,6 +4032,12 @@ entry that no longer matches the code, fix the entry in the same change.**
   reconciliation queue on `/admin/orders` until somebody issues a refund. There
   is no refund path yet (see above), so today that means doing it in Razorpay's
   dashboard and there is nothing in the admin that records having done so.
+
+- **`middleware.ts` is a deprecated convention in Next 16** (build warning).
+  Renaming to `proxy.ts` also moves it from the Edge runtime to Node; see §43
+  for why it was kept out of the safety batch.
+- **The rate limiter reads then writes** (`lib/rateLimit.ts`), so parallel
+  attempts can each see the same count. Needs an atomic increment. §43.
 
 ### Deliberately unused, kept as seams
 

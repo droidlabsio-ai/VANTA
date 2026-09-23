@@ -20,14 +20,37 @@ import { useEffect, useId, useRef } from "react";
 export function TurnstileWidget({
   action,
   className,
+  resetKey,
 }: {
   /** Labels the challenge in Cloudflare's analytics — "admin-login", "register". */
   action: string;
   className?: string;
+  /**
+   * Changes whenever the server has answered a submit — pass the action state.
+   * The token that submit carried is spent either way, so the widget is reset to
+   * fetch a fresh one; without it a second attempt after any error fails with
+   * "couldn't verify that you're human" (§43, checkout).
+   */
+  resetKey?: unknown;
 }) {
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
   const containerId = useId();
   const container = useRef<HTMLDivElement>(null);
+  const firstResetKey = useRef(resetKey);
+
+  useEffect(() => {
+    // Not on mount: the implicit render is already fetching the first token.
+    if (resetKey === firstResetKey.current) return;
+    const api = (window as unknown as { turnstile?: { reset: (el?: HTMLElement) => void } })
+      .turnstile;
+    if (container.current && api) {
+      try {
+        api.reset(container.current);
+      } catch {
+        // Not rendered yet — the implicit render will produce a fresh token.
+      }
+    }
+  }, [resetKey]);
 
   /**
    * A token is single-use and short-lived, and `useActionState` leaves the form

@@ -11,7 +11,7 @@ import { Footer } from "@/components/Footer";
 import { BottomNav } from "@/components/BottomNav";
 import { AddressBook } from "@/components/account/AddressBook";
 import { OrderHistory } from "@/components/account/OrderHistory";
-import { signOutAction } from "./actions";
+import { SignOutButton } from "@/components/account/SignOutButton";
 
 export const metadata: Metadata = pageMetadata({
   title: "Your account",
@@ -133,14 +133,7 @@ export default async function AccountPage() {
 
           <hr className="my-10 border-ink-line" />
 
-          <form action={signOutAction}>
-            <button
-              type="submit"
-              className="rounded-full border border-bone/25 px-8 py-4 text-label-lg font-bold uppercase text-bone transition-colors hover:border-bone hover:bg-bone hover:text-ink"
-            >
-              Sign out
-            </button>
-          </form>
+          <SignOutButton />
         </div>
       </main>
 
