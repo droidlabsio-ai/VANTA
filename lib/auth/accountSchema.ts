@@ -88,6 +88,26 @@ export const addressSchema = z.object({
  * Only the first message per field survives. A field with three complaints
  * stacked under it reads as a broken form, not a helpful one.
  */
+/** "Forgot password": just the email. §44. */
+export const forgotPasswordSchema = z.object({
+  email: emailField,
+});
+
+/**
+ * Choosing a new password from a reset link. The same rules as registration,
+ * plus a confirmation — there is no "old password" to type, so a typo here
+ * would lock the customer straight back out.
+ */
+export const resetPasswordSchema = z
+  .object({
+    password: passwordField,
+    confirm: z.string(),
+  })
+  .refine((value) => value.password === value.confirm, {
+    message: "The two passwords don’t match.",
+    path: ["confirm"],
+  });
+
 export function fieldErrors(error: z.ZodError): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const issue of error.issues) {

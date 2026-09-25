@@ -3830,6 +3830,162 @@ customer about the order.
   attempts can each read the same count. An atomic increment is a small change
   but touches every caller's semantics.
 
+## 44. Forgot password, and the first email the site sends
+
+Customers could not get back into an account whose password they had lost.
+Asked for by the owner on 2026-09-24, ahead of step 2 of the finishing plan.
+
+### Email is Resend over `fetch`
+
+`lib/email.ts` posts to Resend's send endpoint with a bearer key. No SDK: one
+POST is the whole integration. It never throws — a reset request shows the same
+answer whether or not the provider answered, so a failure is logged with
+Resend's own reason and nothing else changes.
+
+**There is no domain yet**, and that sets a hard limit. Resend's shared sender
+`onboarding@resend.dev` works with no DNS at all, but Resend delivers it **only
+to the email address that owns the Resend account**; any other recipient is
+refused with a 403 (logged as `[email] send failed: resend-http-403`). That is
+enough to test the whole flow end to end with the owner's own customer account.
+Real customers get mail when a domain is verified in Resend and `EMAIL_FROM`
+names an address on it. That is configuration, not code.
+
+### Tokens are stored like sessions
+
+`PasswordResetToken` holds the SHA-256 of a 32-byte random token; the raw token
+exists only in the email. Thirty minutes, single use (`usedAt`), and one
+outstanding per customer — asking again deletes the older ones, which is what
+someone who asks twice expects. Plain SHA-256, as for sessions (§24): the input
+is 256 random bits, so there is nothing to slow down.
+
+### Nothing reveals whether an account exists
+
+`requestPasswordResetAction` answers "if there's an account for …, we've
+emailed it a link" for every address. The work that differs — finding the
+customer, writing a token, calling Resend — runs in `after()`, once the response
+has gone, so the reply also takes the same time either way. (Registration still
+says "an account with this email already exists"; closing that is a separate,
+UX-costly decision and is not attempted here.)
+
+Limited like the other customer forms: IP and email, five per fifteen minutes,
+every request counted; Turnstile when configured. With no `RESEND_API_KEY` the
+form says reset by email is not set up yet — the same answer for everyone.
+
+### Using a link signs you out everywhere, then back in here
+
+`consumeResetToken` claims the token with a conditional update (`usedAt` null,
+not expired), sets the new hash, deletes **every** session of that customer and
+any other outstanding token — all in one transaction. The action then creates
+a fresh session for this browser and goes to `/account`. Anyone holding the old
+password or a stolen cookie is out; the person who just proved they own the
+inbox is not made to type the new password twice more. This is the "sign out
+everywhere" `destroyAllCustomerSessions` was kept for (§35); it is inlined so it
+sits inside the transaction.
+
+The reset page checks the token before showing the form, so an expired link
+says so at once; the action checks again, atomically. The page sets
+`referrer: no-referrer` because its URL carries a live token. The link is built
+from `siteUrl`, never from the request's Host header.
+
+### Verified
+
+Against a real Postgres 16 with all three migrations applied in order, and the
+production build served by `next start`, driven by a headless browser:
+register → sign out (§43's button) → "Forgot password?" on the sign-in page →
+the same message for a real and an unknown address → exactly one token row,
+for the real account only → a bad link explained → the good link shows the
+account's email → mismatched confirmation refused → reset signs in → the same
+link refused afterwards → old password refused, new one accepted. Separately:
+two concurrent consumes of one token produce exactly one winner, all sessions
+are deleted, an expired token is refused on the page and in the action, the
+customer's name is HTML-escaped in the email, and tokens cascade when a customer
+is deleted. The Resend call itself could not leave the build environment
+(egress blocked) and was seen failing *correctly* — logged, invisible to the
+visitor. It has not delivered a real email yet.
+
+The migration was written by hand: the environment that wrote it cannot
+download Prisma's schema engine, so `prisma migrate dev` could not generate it.
+It follows the init migration's conventions exactly, applied cleanly, and the
+generated client read and wrote every column through it.
+
+### Operational
+
+- Production needs `npm run db:deploy` **before** this code is deployed, or the
+  reset pages fail on a missing table. Nothing else touches the table, so the
+  rest of the site is unaffected either way.
+- `RESEND_API_KEY` in Vercel (Production and Preview). `EMAIL_FROM` only once a
+  domain is verified.
+- Expired and used tokens are deleted when the customer next asks or resets, not
+  on a schedule. The table holds at most one row per customer who ever asked.
+
+## 45. The home page scroll score, made visible
+
+The owner's verdict on the home page was that it had no scroll animation.
+It did — §18's pinned hero, parallax, tilt and environment morph — but tuned
+so quietly (a 0.92 scale, 50px of parallax, a 6° tilt, a 26% tint) that a
+person scrolling at normal speed saw none of it. This keeps §18's engine and
+adds scenes a visitor notices, one per chapter, each with a one-line reason
+recorded on its component.
+
+### The score
+
+| Chapter | Scene | Component |
+|---|---|---|
+| Hero | Pinned as before; now the photo un-zooms (1.12 → 1) while its frame shrinks — a camera pull-back — and the headline lines drift apart at different rates | `PinnedHero`, `Hero`, `HeroHeadline` |
+| Cut | Two rows of giant type, solid and outlined, slide past each other. Words come from the hero headline and the trust points, so they stay admin-editable | `KineticMarquee` |
+| The Looks | Each photo is wiped open from the top, staggered, the image settling from 1.28 zoom | `CurtainReveal` |
+| Series 026 | The photo opens like a shutter, a narrow slit to full frame, over the frame's backdrop colour. Replaces `TiltOnScroll`, now deleted: two camera moves on one subject compete | `ApertureReveal` |
+| The Kit | Cards rise at staggered depths with an alternating 3.5° lean that straightens; a short flat rise on phones | `RiseIn` |
+| Browse | Each category row slides in from the right, scrubbed per row | `SlideRows` |
+| End | The wordmark, full width, rises letter by letter above the footer | `WordmarkFinale` |
+
+The environment morph's tint went from 26% to 34% so the colour journey reads.
+A scroll-progress line was planned and dropped: the navbar already has one
+(§29's red rail).
+
+### How every scene is built
+
+`lib/useScrollScene.ts` is the one place the rules live: GSAP `matchMedia`,
+setup only under `prefers-reduced-motion: no-preference`, an `isDesktop` flag
+so phones get smaller distances rather than nothing, and automatic teardown of
+everything created inside. Scenes use `fromTo` and never hide anything in CSS,
+so with reduced motion — or without JavaScript — every element sits in its
+finished state. Only `transform`, `opacity` and `clip-path` are animated. Where
+a scene and an existing effect would both drive `y` on one element, the scene
+gets its own wrapper (`data-rise` inside `data-depth`).
+
+Two timings were changed after watching them in a browser: the curtain and the
+rise were first timed off their sections, whose top padding spent most of the
+animation while the photos were still below the fold; both now key off their
+first item. The curtain was first a bottom-up wipe, which kept each frame blank
+until it was nearly fully on screen; it wipes top-down now.
+
+### A bug fixed on the way
+
+`RevealHeadline` wrapped between any two letters on a phone — "BUILT FOR
+EVERY MOVE" rendered as "EVERY MO / VE" — because each character is its own
+inline-block and word boundaries were non-breaking `&nbsp;` blocks. Characters
+are now grouped into unbreakable words with a real space between them.
+
+### Verified
+
+Production build served locally, driven by headless Chromium at 1440×900 and
+390×844: screenshots at eleven scroll depths each, plus targeted frames
+mid-way through every scene, with computed `clip-path`/`transform`/`opacity`
+read at six positions through the curtain and the rise. No console errors.
+With `reducedMotion: "reduce"`, every section rendered in its end state.
+
+Frame rate while scrolling, same harness, before and after on the same
+machine: 38 fps on `main`, 39–40 fps with this change. Headless Chromium on a
+build server renders on the CPU, so those numbers are for comparison only —
+they say the scenes cost nothing measurable, not what a phone will do. No new
+dependency; all scenes use GSAP, already loaded on this page.
+
+**Not verified here:** the real fonts. The build environment cannot reach
+Google Fonts, so screenshots used a fallback face; Archivo 900 is wider, and the
+marquee and finale sizes (`vw`-based) should be checked once on the deployed
+site.
+
 ## Known issues / follow-ups
 
 Every entry below was re-checked against the code on 2026-09-08. (The date read
@@ -4036,6 +4192,13 @@ entry that no longer matches the code, fix the entry in the same change.**
 - **`middleware.ts` is a deprecated convention in Next 16** (build warning).
   Renaming to `proxy.ts` also moves it from the Edge runtime to Node; see §43
   for why it was kept out of the safety batch.
+- **Reset emails reach only the Resend account owner until a domain exists.**
+  §44. Verify a domain in Resend and set `EMAIL_FROM`.
+- **`npm install` on Windows drops `@emnapi/runtime` and `@emnapi/core` from
+  the lockfile again.** §43 restored them; the 2026-09-24 install removed them
+  (npm's optional-dependency handling is platform-dependent). Vercel is
+  unaffected (`npm install`), but `npm ci` on Linux fails until the lockfile is
+  regenerated on Linux or macOS.
 - **The rate limiter reads then writes** (`lib/rateLimit.ts`), so parallel
   attempts can each see the same count. Needs an atomic increment. §43.
 
@@ -4049,8 +4212,10 @@ residue.
   collection for three tables that grow without bound. Nothing schedules them;
   §34 removed the project's only cron because Hobby rejects it. Wire them to a
   cleanup job when there is a scheduler.
-- **`destroyAllCustomerSessions`** — "sign out everywhere". Waiting on a
-  password-change flow, which does not exist.
+- **`destroyAllCustomerSessions`** — "sign out everywhere". Its intent is now
+  served by the password reset (§44), which inlines the same delete inside its
+  transaction. A "sign out of all devices" button on `/account` would be its
+  direct caller.
 - **`isSecretBoxConfigured`** — the fourth of four `is*Configured` predicates;
   the other three are used. An admin diagnostics view would want all four.
 

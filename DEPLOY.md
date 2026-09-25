@@ -78,6 +78,7 @@ unavailable rather than pretending.
 | `SHIPROCKET_WEBHOOK_TOKEN` | The courier webhook refuses every request rather than accepting unauthenticated ones. |
 | `SECRET_ENCRYPTION_KEY` | Safe. The Shiprocket token cache is skipped rather than downgraded to plaintext, so it just logs in more often. Only matters once Shiprocket is connected. |
 | `CRON_SECRET` | `/api/courier/sync` refuses everything. Correct while there is no scheduler — see §4. |
+| `RESEND_API_KEY`, `EMAIL_FROM` | "Forgot password" says reset by email is not set up yet, and sends nothing. With the key but no `EMAIL_FROM`, mail comes from Resend's shared test sender and **only reaches the Resend account owner's own inbox** until a domain is verified in Resend. DECISIONS §44. |
 
 > [!WARNING]
 > **Photo uploads need a Blob store on Vercel.**

@@ -53,6 +53,15 @@ export function SignInForm({ next }: { next?: string }) {
         />
       </Field>
 
+      <p className="-mt-2 text-right text-sm">
+        <Link
+          href="/account/forgot-password"
+          className="text-bone/60 underline underline-offset-4 transition-colors hover:text-bone"
+        >
+          Forgot password?
+        </Link>
+      </p>
+
       <FormError message={state.errors.form} />
 
       <TurnstileWidget action="account-signin" resetKey={state} />

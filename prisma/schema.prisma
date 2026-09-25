@@ -42,11 +42,12 @@ model Customer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sessions  CustomerSession[]
-  addresses Address[]
-  bagLines  BagLine[]
-  wishlist  WishlistItem[]
-  orders    Order[]
+  sessions       CustomerSession[]
+  passwordResets PasswordResetToken[]
+  addresses      Address[]
+  bagLines       BagLine[]
+  wishlist       WishlistItem[]
+  orders         Order[]
 
   @@index([createdAt])
 }
@@ -76,6 +77,32 @@ model CustomerSession {
 
   @@index([customerId])
   @@index([expiresAt])
+}
+
+/// A "forgot password" link that has been emailed. §44.
+///
+/// Stored the way customer sessions are: the link carries a random token and
+/// only its SHA-256 digest is kept, so a leaked database cannot be turned into
+/// working reset links. Single use (`usedAt`), short-lived (`expiresAt`), and a
+/// customer has at most one outstanding — asking again deletes the older ones.
+model PasswordResetToken {
+  id String @id @default(cuid())
+
+  /// SHA-256 of the token in the link, hex.
+  tokenHash String @unique
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  /// Set when the link is used. A used token is never accepted again.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  /// Who asked, for the record. Best-effort, like every other `ip` column.
+  ip String?
+
+  @@index([customerId])
 }
 
 /// A delivery address. Shaped for Indian shipping and for what a courier
