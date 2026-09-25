@@ -92,6 +92,14 @@
 }
 
 @layer utilities {
+  /* Outlined display type for the kinetic marquee (§45). The stroke is the
+     body colour, so the outline reads on every stop the environment morph
+     passes through. */
+  .marquee-outline {
+    color: transparent;
+    -webkit-text-stroke: 1.5px theme("colors.bone.DEFAULT");
+  }
+
   .edge-gutter {
     @apply px-gutter lg:px-gutter-lg;
   }

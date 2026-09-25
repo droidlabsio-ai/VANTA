@@ -30,7 +30,7 @@ export function Hero({ hero }: HeroProps) {
             priority
             fetchPriority="high"
             sizes="(min-width: 1024px) 52vw, 100vw"
-            className="object-cover object-top"
+            className="scale-[1.12] object-cover object-top"
           />
           {/* Bottom scrim so the mobile headline stays legible over the photo */}
           <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-ink via-ink/70 to-transparent lg:hidden" />

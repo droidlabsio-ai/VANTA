@@ -65,7 +65,7 @@ export function EnvironmentMorph() {
         {
           "--env": STOPS[0],
           background:
-            "radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--env) 26%, transparent) 0%, transparent 62%)",
+            "radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--env) 34%, transparent) 0%, transparent 62%)",
         } as React.CSSProperties
       }
     />

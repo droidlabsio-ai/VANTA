@@ -15,7 +15,12 @@ import { ScrollEngine } from "@/components/scroll/ScrollEngine";
 import { EnvironmentMorph } from "@/components/scroll/EnvironmentMorph";
 import { PinnedHero } from "@/components/scroll/PinnedHero";
 import { ParallaxGroup } from "@/components/scroll/Parallax";
-import { TiltOnScroll } from "@/components/scroll/TiltOnScroll";
+import { KineticMarquee } from "@/components/scroll/KineticMarquee";
+import { CurtainReveal } from "@/components/scroll/CurtainReveal";
+import { ApertureReveal } from "@/components/scroll/ApertureReveal";
+import { RiseIn } from "@/components/scroll/RiseIn";
+import { SlideRows } from "@/components/scroll/SlideRows";
+import { WordmarkFinale } from "@/components/scroll/WordmarkFinale";
 import { ChapterIndex } from "@/components/scroll/ChapterIndex";
 
 /**
@@ -83,6 +88,16 @@ export default async function HomePage() {
     .map((id) => byId.get(id))
     .filter((p) => p !== undefined);
 
+  /**
+   * The marquee's words come from the published content, not from code: the
+   * hero headline's lines, then the trust points. An editor changing either
+   * changes the band. §45.
+   */
+  const marqueeRows = [
+    homepage.hero.headline.map((line) => line.map((seg) => seg.text).join("").trim()),
+    homepage.trust.items.map((item) => item.title),
+  ].filter((row) => row.length > 0);
+
   return (
     <div className="storefront-shell">
       <ScrollEngine />
@@ -91,29 +106,41 @@ export default async function HomePage() {
 
       <Navbar nav={homepage.nav} />
       <main id="main">
+        {/*
+          The motion score, top to bottom (§45): the hero pins and the camera
+          pulls back → a band of type slides past → the looks are wiped open
+          one by one → Series 026 opens like a shutter → the kit rises into
+          place → the categories slide in → the name, full width, to close.
+        */}
         <div id="chapter-hero">
           <PinnedHero>
-          <Hero hero={homepage.hero} />
+            <Hero hero={homepage.hero} />
           </PinnedHero>
         </div>
 
-        <ParallaxGroup className="scroll-mt-24" >
+        {marqueeRows.length > 0 && <KineticMarquee rows={marqueeRows} />}
+
+        <ParallaxGroup className="scroll-mt-24">
           <div id="chapter-lookbook">
+            <CurtainReveal>
               <Lookbook slides={homepage.lookbook.slides} />
+            </CurtainReveal>
           </div>
         </ParallaxGroup>
 
-        <TiltOnScroll>
-          <div id="chapter-series">
+        <div id="chapter-series">
+          <ApertureReveal>
             <BrandStatement content={homepage.brandStatement} />
-          </div>
-        </TiltOnScroll>
+          </ApertureReveal>
+        </div>
 
-        <ParallaxGroup distance={40}>
-          <div id="chapter-shop">
-            <ProductRail content={homepage.productRail} products={railProducts} />
-          </div>
-        </ParallaxGroup>
+        <RiseIn>
+          <ParallaxGroup distance={40}>
+            <div id="chapter-shop">
+              <ProductRail content={homepage.productRail} products={railProducts} />
+            </div>
+          </ParallaxGroup>
+        </RiseIn>
 
         <TrustStrip items={homepage.trust.items} />
 
@@ -121,11 +148,15 @@ export default async function HomePage() {
           {/* Leaves only. A group holds no products of its own, so a row for
               it would open a page listing the same garments as the rows
               beneath it. */}
-          <CategoryList
-            heading={homepage.categories.heading}
-            items={leafCategories(withProductCounts(homepage.categories.items, products))}
-          />
+          <SlideRows>
+            <CategoryList
+              heading={homepage.categories.heading}
+              items={leafCategories(withProductCounts(homepage.categories.items, products))}
+            />
+          </SlideRows>
         </div>
+
+        <WordmarkFinale word={homepage.footer.wordmark} />
       </main>
       <Footer content={homepage.footer} />
       <BottomNav items={homepage.nav.bottomNav} />

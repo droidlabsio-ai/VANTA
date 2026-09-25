@@ -38,6 +38,7 @@ export function Lookbook({ slides }: LookbookProps) {
             <div data-depth={i % 2 === 0 ? 0.55 : 0.25}>
             <Link href={slide.href} className="group block">
               <div
+                data-curtain
                 className={cn(
                   "relative aspect-[3/4] w-full overflow-hidden",
                   backdropClass[slide.backdrop],

@@ -61,7 +61,18 @@ export function PinnedHero({ children }: { children: React.ReactNode }) {
 
         if (media) {
           tl.to(media, { scale: 0.92, yPercent: -6, ease: "none" }, 0);
+          // The camera pulls back (§45): the frame shrinks while the photo
+          // inside it un-zooms, so the shot widens instead of just getting
+          // smaller. The resting 1.12 is set in `Hero`'s class list, so there
+          // is no jump when this takes over.
+          const photo = media.querySelector("img");
+          if (photo) tl.fromTo(photo, { scale: 1.12 }, { scale: 1, ease: "none" }, 0);
         }
+        // Headline lines drift apart at different rates — the top line
+        // fastest — so the type separates in depth as the hero leaves.
+        el.querySelectorAll<HTMLElement>("[data-hero-copy] [data-hero-line]").forEach((line, i) => {
+          tl.to(line, { yPercent: -(60 - i * 18), ease: "none" }, 0);
+        });
         if (copy) {
           tl.to(copy, { yPercent: -14, opacity: 0.28, ease: "none" }, 0);
         }

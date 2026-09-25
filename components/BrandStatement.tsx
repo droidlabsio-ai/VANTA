@@ -28,14 +28,18 @@ export function BrandStatement({ content }: BrandStatementProps) {
             backdropClass[content.backdrop],
           )}
         >
-          <Image
-            src={content.image.src}
-            alt={content.image.alt}
-            fill
-            loading="lazy"
-            sizes="(min-width: 1024px) 50vw, 100vw"
-            className="object-cover object-top"
-          />
+          {/* The shutter (§45) opens this inner layer, so the frame's backdrop
+              colour shows around the slit. */}
+          <div data-aperture className="absolute inset-0 overflow-hidden">
+            <Image
+              src={content.image.src}
+              alt={content.image.alt}
+              fill
+              loading="lazy"
+              sizes="(min-width: 1024px) 50vw, 100vw"
+              className="object-cover object-top"
+            />
+          </div>
         </Reveal>
 
         {/* Copy */}

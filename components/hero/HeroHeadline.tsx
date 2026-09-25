@@ -24,7 +24,7 @@ export function HeroHeadline({ lines, className }: HeroHeadlineProps) {
         as="h1"
         className={className}
         renderLine={(content, i) => (
-          <span key={i} className="block overflow-hidden pb-[0.08em]">
+          <span key={i} data-hero-line className="block overflow-hidden pb-[0.08em]">
             <motion.span variants={lineReveal} className="block">
               {content}
             </motion.span>

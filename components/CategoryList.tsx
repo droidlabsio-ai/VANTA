@@ -34,7 +34,9 @@ export function CategoryList({ heading, items }: CategoryListProps) {
               variants={fadeUpSm}
               className="border-b border-bone/10 first:border-t"
             >
-              <CategoryRow category={category} />
+              <div data-slide>
+                <CategoryRow category={category} />
+              </div>
             </RevealItem>
           ))}
         </RevealItem>

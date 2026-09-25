@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import type { HeadlineLine } from "@/data/types";
-import { headlineText, splitHeadline } from "@/lib/splitHeadline";
+import { headlineText, splitHeadline, type SplitLine } from "@/lib/splitHeadline";
 import { cn } from "@/lib/format";
 
 /**
@@ -72,24 +72,48 @@ export function RevealHeadline({
       <span ref={root as React.RefObject<HTMLSpanElement>} aria-hidden className="block">
         {split.map((line, li) => (
           <span key={li} className="block overflow-hidden pb-[0.08em]">
-            {line.map((c) =>
-              c.isSpace ? (
-                <span key={c.index} className="inline-block">
-                  &nbsp;
+            {/*
+              Characters are grouped into unbreakable words, with a real space
+              between words (§45). Each character is its own inline-block so it
+              can rise on its own, and with nothing marking where words end the
+              browser was free to wrap between any two of them — on a phone,
+              "EVERY MOVE" broke as "EVERY MO / VE".
+            */}
+            {wordsOf(line).map((word, wi) => (
+              <span key={wi}>
+                {wi > 0 && " "}
+                <span className="inline-block whitespace-nowrap">
+                  {word.map((c) => (
+                    <span
+                      key={c.index}
+                      data-char
+                      className={cn("inline-block will-change-transform", c.accent && "font-accent font-normal italic normal-case")}
+                    >
+                      {c.char}
+                    </span>
+                  ))}
                 </span>
-              ) : (
-                <span
-                  key={c.index}
-                  data-char
-                  className={cn("inline-block will-change-transform", c.accent && "font-accent font-normal italic normal-case")}
-                >
-                  {c.char}
-                </span>
-              ),
-            )}
+              </span>
+            ))}
           </span>
         ))}
       </span>
     </Tag>
   );
+}
+
+/** A split line as words: runs of non-space characters, spaces dropped. */
+function wordsOf(line: SplitLine): SplitLine[] {
+  const words: SplitLine[] = [];
+  let current: SplitLine = [];
+  for (const c of line) {
+    if (c.isSpace) {
+      if (current.length) words.push(current);
+      current = [];
+    } else {
+      current.push(c);
+    }
+  }
+  if (current.length) words.push(current);
+  return words;
 }

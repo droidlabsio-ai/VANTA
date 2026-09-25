@@ -53,7 +53,11 @@ export function ProductRail({ content, products }: ProductRailProps) {
           >
             {/* Cards lift at slightly different rates so the row has depth. */}
             <div data-depth={i % 2 === 0 ? 0.35 : 0.15}>
-              <ProductCard product={product} />
+              {/* Its own layer: the parallax above moves `y` too, and two
+                  tweens on one element's `y` would overwrite each other. */}
+              <div data-rise>
+                <ProductCard product={product} />
+              </div>
             </div>
           </RevealItem>
         ))}
