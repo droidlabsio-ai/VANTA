@@ -8,6 +8,7 @@ import { drainQueueAction, rePushOrderAction } from "./actions";
 import { RefundButton } from "@/components/admin/RefundButton";
 import { expireUnpaidOrders } from "@/lib/payments/expiry";
 import { isRazorpayConfigured } from "@/lib/payments/razorpay";
+import type { OrderStatusValue } from "@/lib/orderStatus";
 
 /**
  * Orders and shipments.
@@ -32,7 +33,51 @@ const STATUS_TONE: Record<string, "neutral" | "accent" | "muted"> = {
   REFUNDED: "muted",
 };
 
-export default async function AdminOrdersPage() {
+const FILTERS = [
+  { key: "", label: "All" },
+  { key: "to-pack", label: "To pack" },
+  { key: "unpaid", label: "Awaiting payment" },
+  { key: "shipped", label: "On the way" },
+  { key: "done", label: "Delivered" },
+  { key: "closed", label: "Cancelled / refunded" },
+] as const;
+
+/** What each filter chip means, as a status list (§49). */
+const FILTER_STATUSES: Record<string, OrderStatusValue[]> = {
+  "to-pack": ["CONFIRMED", "PACKED"],
+  unpaid: ["PENDING_PAYMENT"],
+  shipped: ["SHIPPED"],
+  done: ["DELIVERED"],
+  closed: ["CANCELLED", "REFUNDED"],
+};
+
+export default async function AdminOrdersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; show?: string }>;
+}) {
+  const query = await searchParams;
+  const q = (query.q ?? "").trim().slice(0, 80);
+  const show = FILTER_STATUSES[query.show ?? ""] ? (query.show as string) : "";
+  /**
+   * One box finds an order by what staff actually have in hand: the order
+   * number off a label, a name, an email, a phone number or a pincode.
+   */
+  const where = {
+    ...(show ? { status: { in: FILTER_STATUSES[show] } } : {}),
+    ...(q
+      ? {
+          OR: [
+            { orderNumber: { contains: q, mode: "insensitive" as const } },
+            { shipName: { contains: q, mode: "insensitive" as const } },
+            { email: { contains: q, mode: "insensitive" as const } },
+            { shipPhone: { contains: q } },
+            { shipPincode: { contains: q } },
+          ],
+        }
+      : {}),
+  };
+
   if (!hasDatabase()) {
     return (
       <div className="mx-auto max-w-5xl space-y-6">
@@ -57,6 +102,7 @@ export default async function AdminOrdersPage() {
 
   const [orders, pendingJobs, failingJobs, unprocessedEvents] = await Promise.all([
     prisma.order.findMany({
+      where,
       orderBy: { placedAt: "desc" },
       take: 100,
       select: {
@@ -199,18 +245,55 @@ export default async function AdminOrdersPage() {
       )}
 
       <Card>
-        <CardHeader title="Orders" hint="The hundred most recent." />
+        <CardHeader title="Orders" hint="The hundred most recent that match. Click an order for everything about it." />
+        <div className="flex flex-wrap items-center gap-3 border-b border-admin-border px-5 py-3">
+          <form className="flex min-w-0 flex-1 gap-2" role="search">
+            {show && <input type="hidden" name="show" value={show} />}
+            <input
+              type="search"
+              name="q"
+              defaultValue={q}
+              placeholder="Order number, name, email, phone or pincode"
+              aria-label="Search orders"
+              className="min-w-0 flex-1 rounded-lg border border-admin-border bg-admin-surface px-3 py-2 text-sm text-admin-ink placeholder:text-admin-subtle focus:border-admin-accent focus:outline-none"
+            />
+            <Button type="submit">Search</Button>
+          </form>
+          <nav aria-label="Filter orders" className="flex flex-wrap gap-1">
+            {FILTERS.map((f) => {
+              const params = new URLSearchParams();
+              if (f.key) params.set("show", f.key);
+              if (q) params.set("q", q);
+              const active = f.key === show;
+              return (
+                <Link
+                  key={f.key || "all"}
+                  href={`/admin/orders${params.size ? `?${params}` : ""}`}
+                  aria-current={active ? "page" : undefined}
+                  className={
+                    active
+                      ? "rounded-full bg-admin-ink px-3 py-1 text-xs font-semibold text-white"
+                      : "rounded-full px-3 py-1 text-xs font-medium text-admin-muted hover:bg-admin-bg hover:text-admin-ink"
+                  }
+                >
+                  {f.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
         <div className="p-5">
           {orders.length === 0 ? (
-            <p className="text-sm text-admin-muted">No orders yet.</p>
+            <p className="text-sm text-admin-muted">
+              {q || show ? "No orders match. Try a different search or filter." : "No orders yet."}
+            </p>
           ) : (
             <ul className="divide-y divide-admin-border">
               {orders.map((order) => (
                 <li key={order.id} className="py-4">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <Link
-                      href={`/orders/${order.orderNumber}`}
-                      target="_blank"
+                      href={`/admin/orders/${order.orderNumber}`}
                       className="text-sm font-semibold text-admin-ink hover:underline"
                     >
                       {order.orderNumber}

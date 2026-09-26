@@ -28,6 +28,7 @@ export function RefundButton({
   });
 
   if (state.ok) {
+    // The row re-renders as refunded on the next navigation; say so now.
     return <span className="text-xs font-semibold text-admin-ink">{state.message}</span>;
   }
 

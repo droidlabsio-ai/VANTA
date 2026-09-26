@@ -8,6 +8,12 @@ import { COURIER_PUSH, enqueue } from "@/lib/outbox";
 import { drainCourierQueue, pushOrderToCourier } from "@/lib/shipping/courierPush";
 import { createRefund, isRazorpayConfigured } from "@/lib/payments/razorpay";
 import { releaseStock } from "@/lib/stock";
+import {
+  STOCK_STILL_HERE,
+  canCancel,
+  isValidStep,
+  type OrderStatusValue,
+} from "@/lib/orderStatus";
 
 /**
  * Staff actions on the shipments view.
@@ -48,6 +54,7 @@ export async function rePushOrderAction(formData: FormData): Promise<void> {
   });
 
   revalidatePath("/admin/orders");
+  revalidatePath(`/admin/orders/${order.orderNumber}`);
 }
 
 /** Works through whatever is due, for when a backlog needs clearing by hand. */
@@ -85,9 +92,9 @@ export interface RefundState {
  * instead of paying out twice (`createRefund`).
  *
  * Stock goes back only for an order that had not left the building —
- * CONFIRMED (not yet packed). A packed or shipped order's goods are with the
- * courier or the customer; they come back as a return, which is counted by
- * hand on /admin/stock. A cancelled order already returned its stock when it
+ * CONFIRMED or PACKED (§49 added PACKED: a packed box is still on the shelf).
+ * A shipped order's goods are with the courier or the customer; they come back
+ * as a return, which is counted by hand on /admin/stock. A cancelled order already returned its stock when it
  * was cancelled.
  */
 export async function refundOrderAction(
@@ -135,7 +142,7 @@ export async function refundOrderAction(
     return { ok: false, message: result.error };
   }
 
-  const restock = order.status === "CONFIRMED";
+  const restock = order.status === "CONFIRMED" || order.status === "PACKED";
   await prisma.$transaction(async (tx) => {
     const claimed = await tx.order.updateMany({
       where: { id: order.id, refundedAt: null },
@@ -168,9 +175,142 @@ export async function refundOrderAction(
   });
 
   revalidatePath("/admin/orders");
+  revalidatePath(`/admin/orders/${order.orderNumber}`);
   revalidatePath("/admin/stock");
   return {
     ok: true,
     message: `Refund ${result.value.status === "processed" ? "done" : "started"} (${result.value.id}).`,
   };
+}
+
+/**
+ * Move an order one step forward: packed, shipped, delivered (§49).
+ *
+ * Only the single next step is accepted (`lib/orderStatus.ts`), and the update
+ * is conditional on the status still being the one the page showed — two
+ * people pressing at once, or the courier webhook moving it meanwhile, cannot
+ * make it skip a step or go backwards.
+ *
+ * "Mark shipped" can carry the AWB, courier and tracking link for a parcel
+ * booked by hand, so the customer's order page shows tracking even without
+ * Shiprocket. Blank fields leave whatever the courier integration wrote.
+ */
+export async function advanceOrderAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  if (!hasDatabase()) return;
+
+  const orderId = String(formData.get("orderId") ?? "");
+  const from = String(formData.get("from") ?? "") as OrderStatusValue;
+  const to = String(formData.get("to") ?? "") as OrderStatusValue;
+  if (!isValidStep(from, to)) return;
+
+  const text = (name: string, max: number) => {
+    const value = String(formData.get(name) ?? "").trim().slice(0, max);
+    return value || undefined;
+  };
+  const trackingUrl = text("trackingUrl", 500);
+  const tracking =
+    to === "SHIPPED"
+      ? {
+          awb: text("awb", 64),
+          courierName: text("courierName", 80),
+          // Only an http(s) link: it is rendered as a link on the customer's page.
+          trackingUrl: trackingUrl && /^https?:\/\//i.test(trackingUrl) ? trackingUrl : undefined,
+        }
+      : {};
+
+  const updated = await prisma.order.updateMany({
+    where: { id: orderId, status: from },
+    data: { status: to, ...tracking },
+  });
+  if (updated.count === 0) return;
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { orderNumber: true },
+  });
+  await recordAudit({
+    actor: admin.username,
+    action: "order.status_changed",
+    target: order?.orderNumber,
+    detail: { from, to },
+  });
+
+  revalidatePath("/admin/orders");
+  if (order) revalidatePath(`/admin/orders/${order.orderNumber}`);
+  revalidatePath("/admin");
+}
+
+export interface CancelState {
+  ok: boolean;
+  message: string | null;
+}
+
+/**
+ * Cancel an order that hasn't left and hasn't been paid online (§49).
+ *
+ * COD orders and unpaid online orders only — `canCancel` explains why a paid
+ * online order is refunded instead. Stock goes back in the same transaction,
+ * claimed on the status the page showed, so it is returned exactly once. The
+ * courier job is closed so a cancelled order is never booked; if it was
+ * already booked with Shiprocket, the page says to cancel it there too.
+ */
+export async function cancelOrderAction(
+  _previous: CancelState,
+  formData: FormData,
+): Promise<CancelState> {
+  const admin = await requireAdmin();
+  if (!hasDatabase()) return { ok: false, message: "No database." };
+
+  const orderId = String(formData.get("orderId") ?? "");
+  const reason = String(formData.get("reason") ?? "").trim().slice(0, 200) || "cancelled-by-staff";
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, orderNumber: true, status: true, paymentMethod: true, paidAt: true },
+  });
+  if (!order) return { ok: false, message: "Order not found." };
+  if (!canCancel(order)) {
+    return {
+      ok: false,
+      message:
+        order.paymentMethod === "ONLINE" && order.paidAt
+          ? "This order is paid — use Refund, which also cancels it."
+          : "This order can no longer be cancelled here.",
+    };
+  }
+
+  const done = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.order.updateMany({
+      where: { id: order.id, status: order.status },
+      data: { status: "CANCELLED", cancelledAt: new Date(), cancelReason: reason },
+    });
+    if (claimed.count === 0) return false;
+    if (STOCK_STILL_HERE.has(order.status)) {
+      const items = await tx.orderItem.findMany({
+        where: { orderId: order.id },
+        select: { sku: true, quantity: true },
+      });
+      await releaseStock(tx, items);
+    }
+    await tx.outboxJob.updateMany({
+      where: { kind: COURIER_PUSH, orderId: order.id, completedAt: null },
+      data: { completedAt: new Date(), lastError: "cancelled" },
+    });
+    return true;
+  });
+  if (!done) return { ok: false, message: "The order changed meanwhile — reload and try again." };
+
+  await recordAudit({
+    actor: admin.username,
+    action: "order.cancelled",
+    target: order.orderNumber,
+    detail: { from: order.status, reason },
+  });
+
+  revalidatePath("/admin/orders");
+  revalidatePath(`/admin/orders/${order.orderNumber}`);
+  revalidatePath("/admin/stock");
+  revalidatePath("/admin");
+  return { ok: true, message: "Order cancelled. Stock returned." };
 }

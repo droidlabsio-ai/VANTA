@@ -73,6 +73,8 @@ const ACTION_LABELS: Record<string, string> = {
   "stock.updated": "Updated stock",
   "payment.refunded": "Refunded an order",
   "payment.refund_failed": "Refund failed",
+  "order.status_changed": "Moved an order on",
+  "order.cancelled": "Cancelled an order",
 };
 
 export default async function SecurityPage() {

@@ -4226,6 +4226,75 @@ Test mode needs no KYC. In Razorpay's dashboard (Test mode): API keys →
 `order.paid`, `refund.processed`, `refund.failed`. Live mode repeats this with
 live keys after KYC.
 
+## 49. Admin order tools and the sales dashboard
+
+Step 6 of the finishing plan. The orders list showed a name and a city, and
+clicking an order opened the *customer's* page — which needs the customer's
+session or signed link, so staff got "not found". Nothing could move an order
+on by hand, and the admin home page knew nothing about sales.
+
+### One page per order (`/admin/orders/[orderNumber]`)
+
+What to pack (title, **size**, SKU, quantity), totals, the delivery address
+with tap-to-call and email links, account or guest, the customer's note,
+courier state, payment and refund ids, and a timeline. The list now links
+here.
+
+### Moving an order on (`lib/orderStatus.ts`)
+
+One table decides which button appears and what the server accepts:
+
+- **Forward only, one step at a time**: Confirmed → Packed → Shipped →
+  Delivered. The update is conditional on the status the page showed, so a
+  double click, two staff, or the courier webhook moving it meanwhile cannot
+  make it skip or go back.
+- **Mark shipped** can take courier, AWB and tracking link for a parcel booked
+  by hand; the customer's order page then shows tracking without Shiprocket.
+  Only `http(s)` links are stored — it is rendered as a link.
+- **Cancel** only before the parcel leaves (awaiting payment, confirmed,
+  packed), with an optional reason. Stock goes back in the same transaction;
+  the courier job is closed; if the order was already booked with Shiprocket
+  the confirmation says to cancel it there too.
+- **A paid online order is refunded, not cancelled.** Cancelling would keep
+  the customer's money for nothing; the Refund button cancels and repays in one
+  step. Refund now also returns stock for PACKED orders (the box is still on
+  the shelf), not only CONFIRMED.
+- Audited: `order.status_changed` (with from/to), `order.cancelled`.
+
+### Finding orders
+
+One search box — order number, name, email, phone or pincode — and filter
+chips: To pack, Awaiting payment, On the way, Delivered, Cancelled/refunded.
+
+### Sales dashboard (admin home, `lib/salesStats.ts`)
+
+- **What needs doing**: to pack, refund needed (paid but cancelled), awaiting
+  payment — each a link to the filtered list. "Refund needed" turns red.
+- **Sales today, last 30 days, average order.** A sale is CONFIRMED, PACKED,
+  SHIPPED or DELIVERED: unpaid, cancelled and refunded orders are excluded. COD
+  counts from placement (flatters slightly if a COD parcel is refused; step 4's
+  courier statuses will catch those). Days are **India days** — "today" starts
+  at midnight IST, not UTC.
+- **Sales per day**, last 14 days: plain HTML bars in the admin accent (one
+  series, so no legend; colour checked with the dataviz validator), hover or
+  keyboard-focus readout per bar, three axis dates so labels never collide,
+  and a "Show as a table" with every figure.
+- **Best sellers** (pieces, 30 days) and **Running low** (counted sizes at 3
+  or fewer, sold out in red), with a link to /admin/stock.
+- The page is now a server page; the content half (publish, hero preview) is
+  the old client page moved to `components/admin/ContentOverview.tsx`.
+
+### Checked
+
+Locally against Postgres 16 with seeded orders across days and statuses (23
+checks): today / 30-day / average figures exclude unpaid, cancelled and
+>30-day orders; to-pack, refund-needed and awaiting counts; best sellers;
+low stock shows M=2 and L sold out and hides S=9; 14 bars; search by pincode;
+To-pack filter; list → detail with size; packed → shipped (with AWB and link)
+→ delivered, three audit rows; no Cancel once shipped; COD cancel with reason
+returns stock; a paid online order offers Refund, not Cancel; the
+refund-needed banner; unknown order number → 404.
+
 ## Known issues / follow-ups
 
 Every entry below was re-checked against the code on 2026-09-08. (The date read
@@ -4259,8 +4328,9 @@ entry that no longer matches the code, fix the entry in the same change.**
 
   **The notice comes out at the same time as those go in, and not before** —
   it is the only thing currently making the pages honest.
-- ~~**No refund path.**~~ Full refunds from /admin/orders since §48. Partial
-  refunds still need step 6's order screen.
+- ~~**No refund path.**~~ Full refunds from /admin/orders since §48. **Partial
+  refunds** (one line of several) are still not built: the order screen (§49)
+  exists now, but a line-level "returned" record does not.
 - **No order confirmation email.** Nothing is sent when an order is placed. The
   order page says so and tells the customer to keep the page rather than
   promising a message that will never arrive — but a guest who loses the signed
@@ -4286,9 +4356,8 @@ entry that no longer matches the code, fix the entry in the same change.**
 - ~~**The bag does not carry a size.**~~ Resolved in §47: bag lines, orders
   and the courier push all carry the variant SKU and size, and stock is counted
   per size.
-- **Cancelling an order does not restock it** (§47). Unpaid orders that time
-  out and refunds before packing do return stock since §48 (`releaseStock`);
-  a manual cancel button (step 6) must call it too.
+- ~~**Cancelling an order does not restock it**~~ (§47). Resolved: expiry and
+  refunds (§48) and the admin Cancel button (§49) all return stock.
 - **The unpaid-order sweep has no schedule** (§48). It runs before checkout and
   on /admin/orders. Step 4's cron should call `expireUnpaidOrders` as well.
 

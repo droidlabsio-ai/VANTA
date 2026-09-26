@@ -37,7 +37,9 @@ export type AuditAction =
   | "courier.queue_drained"
   | "stock.updated"
   | "payment.refunded"
-  | "payment.refund_failed";
+  | "payment.refund_failed"
+  | "order.status_changed"
+  | "order.cancelled";
 
 export interface AuditEntry {
   actor: string;
