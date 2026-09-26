@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { Product } from "@/data/types";
 import { useWishlist } from "@/components/WishlistProvider";
 import { useBag } from "@/components/BagProvider";
+import { onlySku } from "@/lib/bagLine";
 import { ProductCard } from "@/components/ProductCard";
 
 /**
@@ -83,7 +84,7 @@ export function WishlistContents({ catalogue }: { catalogue: Product[] }) {
           */}
           <button
             type="button"
-            onClick={() => allAvailable.forEach((p) => add(p.id))}
+            onClick={() => allAvailable.forEach((p) => add(p.id, onlySku(p)))}
             className="text-label font-bold uppercase text-bone underline underline-offset-4 transition-opacity hover:opacity-70"
           >
             Add all to bag

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/db";
+import { lineKey } from "@/lib/bagLine";
 
 /**
  * The signed-in bag and wishlist.
@@ -16,6 +17,8 @@ import { prisma } from "@/lib/db";
 
 export interface StoredBagLine {
   id: string;
+  /** The chosen size's SKU (§47). Absent for a line with no size chosen yet. */
+  sku?: string;
   qty: number;
 }
 
@@ -54,10 +57,12 @@ function normalise(data: Partial<CustomerData> | null | undefined): CustomerData
   const cleanBag: StoredBagLine[] = [];
   for (const line of bag) {
     const id = typeof line?.id === "string" ? line.id.slice(0, 128) : "";
+    const sku = typeof line?.sku === "string" ? line.sku.trim().slice(0, 64) : "";
     const qty = clampQty(line?.qty as number);
-    if (!id || qty === 0 || seen.has(id)) continue;
-    seen.add(id);
-    cleanBag.push({ id, qty });
+    const clean: StoredBagLine = sku ? { id, sku, qty } : { id, qty };
+    if (!id || qty === 0 || seen.has(lineKey(clean))) continue;
+    seen.add(lineKey(clean));
+    cleanBag.push(clean);
     if (cleanBag.length >= MAX_LINES) break;
   }
 
@@ -77,7 +82,7 @@ export async function readCustomerData(customerId: string): Promise<CustomerData
   const [bagLines, wishlist] = await Promise.all([
     prisma.bagLine.findMany({
       where: { customerId },
-      select: { productId: true, qty: true },
+      select: { productId: true, sku: true, qty: true },
       orderBy: { updatedAt: "asc" },
     }),
     prisma.wishlistItem.findMany({
@@ -88,7 +93,11 @@ export async function readCustomerData(customerId: string): Promise<CustomerData
   ]);
 
   return {
-    bag: bagLines.map((line) => ({ id: line.productId, qty: line.qty })),
+    // "" is how the table stores "no size chosen" — it is part of the key, so
+    // it cannot be null (§47).
+    bag: bagLines.map((line) =>
+      line.sku ? { id: line.productId, sku: line.sku, qty: line.qty } : { id: line.productId, qty: line.qty },
+    ),
     wishlist: wishlist.map((item) => item.productId),
   };
 }
@@ -104,23 +113,23 @@ export async function readCustomerData(customerId: string): Promise<CustomerData
  * `createdAt` on surviving wishlist rows is preserved by only deleting what
  * actually left; wiping and reinserting would reshuffle the list into "all
  * saved just now" on every change.
+ *
+ * The bag, keyed by product *and size* since §47, is wiped and rewritten in
+ * the same transaction instead: its order is the order lines were added, which
+ * `updatedAt` on a fresh insert preserves, and a "not in these (product, size)
+ * pairs" delete has no tidy Prisma form.
  */
 export async function saveCustomerData(
   customerId: string,
   incoming: Partial<CustomerData>,
 ): Promise<CustomerData> {
   const { bag, wishlist } = normalise(incoming);
-  const bagIds = bag.map((line) => line.id);
 
   await prisma.$transaction([
-    prisma.bagLine.deleteMany({
-      where: { customerId, productId: { notIn: bagIds } },
-    }),
+    prisma.bagLine.deleteMany({ where: { customerId } }),
     ...bag.map((line) =>
-      prisma.bagLine.upsert({
-        where: { customerId_productId: { customerId, productId: line.id } },
-        create: { customerId, productId: line.id, qty: line.qty },
-        update: { qty: line.qty },
+      prisma.bagLine.create({
+        data: { customerId, productId: line.id, sku: line.sku ?? "", qty: line.qty },
       }),
     ),
     prisma.wishlistItem.deleteMany({
@@ -154,13 +163,17 @@ export async function saveCustomerData(
  * The wishlist is a plain union — it is a set, so there is nothing to reconcile.
  */
 export function mergeData(local: CustomerData, stored: CustomerData): CustomerData {
-  const byId = new Map(stored.bag.map((line) => [line.id, line.qty]));
+  // Keyed by product and size (§47): an M and an L of the same tee are two
+  // lines, and the larger-wins rule applies to each separately.
+  const byKey = new Map(stored.bag.map((line) => [lineKey(line), line]));
   for (const line of local.bag) {
-    byId.set(line.id, Math.max(byId.get(line.id) ?? 0, line.qty));
+    const key = lineKey(line);
+    const existing = byKey.get(key);
+    byKey.set(key, { ...line, qty: Math.max(existing?.qty ?? 0, line.qty) });
   }
 
   return {
-    bag: [...byId].map(([id, qty]) => ({ id, qty })).slice(0, MAX_LINES),
+    bag: [...byKey.values()].slice(0, MAX_LINES),
     // Local first: an item saved on this device just now should be at the top
     // of the list, which is where the client would have put it.
     wishlist: [...new Set([...local.wishlist, ...stored.wishlist])].slice(0, MAX_LINES),

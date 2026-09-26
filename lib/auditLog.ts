@@ -34,7 +34,8 @@ export type AuditAction =
   | "media.deleted"
   | "courier.pushed"
   | "courier.push_failed"
-  | "courier.queue_drained";
+  | "courier.queue_drained"
+  | "stock.updated";
 
 export interface AuditEntry {
   actor: string;

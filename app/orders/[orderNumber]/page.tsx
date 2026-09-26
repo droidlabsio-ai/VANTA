@@ -205,6 +205,11 @@ export default async function OrderPage({
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-bone">{item.title}</p>
+                    {item.size && (
+                      <p className="mt-1 text-xs uppercase tracking-[0.12em] text-bone/60">
+                        Size {item.size}
+                      </p>
+                    )}
                     <p className="mt-1 text-xs text-bone/40">
                       {formatPaise(item.unitPrice)} &times; {item.quantity}
                     </p>

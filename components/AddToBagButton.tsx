@@ -17,10 +17,13 @@ import { cn } from "@/lib/format";
  */
 export function AddToBagButton({
   productId,
+  sku,
   blockedReason = null,
   onBlockedClick,
 }: {
   productId: string;
+  /** The chosen size's SKU (§47). Omitted for a product with no sizes. */
+  sku?: string;
   /**
    * Why the button cannot be used yet — "Select a size", "Sold out" — or null.
    *
@@ -37,6 +40,14 @@ export function AddToBagButton({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hintId = useId();
   const blocked = blockedReason !== null;
+  /**
+   * Pressed while blocked. §47: a greyed-out button with a faint note under it
+   * read as broken to the owner, who never noticed the note. The button now
+   * looks available until it is pressed without a size, and the note then
+   * turns into a clear instruction in the accent colour.
+   */
+  const [nudged, setNudged] = useState(false);
+  const soldOut = blockedReason === "Sold out";
 
   // Clearing on unmount stops the timer firing into a component that has gone.
   useEffect(() => () => {
@@ -45,10 +56,12 @@ export function AddToBagButton({
 
   const onClick = () => {
     if (blocked) {
+      setNudged(true);
       onBlockedClick?.();
       return;
     }
-    add(productId);
+    setNudged(false);
+    add(productId, sku);
     setJustAdded(true);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setJustAdded(false), 4000);
@@ -80,7 +93,10 @@ export function AddToBagButton({
           "inline-flex w-full items-center justify-center rounded-full px-8 py-4 text-label-lg font-bold uppercase transition-colors duration-200 ease-in-out sm:w-auto",
           "bg-bone text-ink hover:bg-white",
           "disabled:cursor-not-allowed disabled:opacity-60",
-          "aria-disabled:cursor-not-allowed aria-disabled:opacity-60 aria-disabled:hover:bg-bone",
+          // Only a sold-out product looks unavailable. "Choose a size" is a
+          // step still to take, not a dead end, so the button keeps its full
+          // weight and explains itself when pressed (§47).
+          soldOut && "cursor-not-allowed opacity-60 hover:bg-bone",
         )}
       >
         {justAdded ? "Added to bag" : "Add to bag"}
@@ -94,7 +110,14 @@ export function AddToBagButton({
         what it contains on first render, so it is read through
         `aria-describedby` instead, when the button is focused.
       */}
-      <p id={hintId} aria-live="polite" className="min-h-[1.25rem] text-sm text-bone/60">
+      <p
+        id={hintId}
+        aria-live="polite"
+        className={cn(
+          "min-h-[1.25rem] text-sm",
+          blocked && nudged && !justAdded ? "font-semibold text-flare-orange" : "text-bone/60",
+        )}
+      >
         {justAdded ? (
           <>
             Added.{" "}
@@ -106,7 +129,7 @@ export function AddToBagButton({
             </Link>
           </>
         ) : blocked ? (
-          blockedReason
+          nudged && !soldOut ? "Please choose a size first." : blockedReason
         ) : null}
       </p>
     </div>

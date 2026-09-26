@@ -70,6 +70,7 @@ const ACTION_LABELS: Record<string, string> = {
   "courier.pushed": "Pushed an order to the courier",
   "courier.push_failed": "Courier push failed",
   "courier.queue_drained": "Drained the courier queue",
+  "stock.updated": "Updated stock",
 };
 
 export default async function SecurityPage() {

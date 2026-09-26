@@ -65,11 +65,13 @@ export function CheckoutForm({
 
   return (
     <form action={formAction} className="space-y-8">
-      {/* Ids and quantities only — see the note above. */}
+      {/* Ids, sizes and quantities only — see the note above. */}
       <input
         type="hidden"
         name="lines"
-        value={JSON.stringify(lines.map((l) => ({ productId: l.id, quantity: l.qty })))}
+        value={JSON.stringify(
+          lines.map((l) => ({ productId: l.id, ...(l.sku ? { sku: l.sku } : {}), quantity: l.qty })),
+        )}
       />
 
       <section className="space-y-4">

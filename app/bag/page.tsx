@@ -5,6 +5,7 @@ import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { BottomNav } from "@/components/BottomNav";
 import { BagContents } from "@/components/BagContents";
+import { soldOutSkus } from "@/lib/stock";
 
 export const metadata: Metadata = pageMetadata({
   title: "Bag",
@@ -26,8 +27,14 @@ export const metadata: Metadata = pageMetadata({
  * because the server has no way of knowing what is in the bag. It is a few
  * kilobytes of already-public data.
  */
+export const dynamic = "force-dynamic";
+
 export default async function BagPage() {
-  const { homepage, products } = await contentStore.read();
+  const [{ homepage, products }, soldOut] = await Promise.all([
+    contentStore.read(),
+    // Stock changes with every order, so this page is never served from cache.
+    soldOutSkus(),
+  ]);
 
   return (
     <div className="storefront-shell">
@@ -37,7 +44,7 @@ export default async function BagPage() {
         <div className="px-gutter pb-16 lg:px-gutter-lg lg:pb-24">
           <h1 className="headline text-display-sm lg:text-display-md">Bag</h1>
           <div className="mt-8">
-            <BagContents catalogue={products} />
+            <BagContents catalogue={products} soldOut={soldOut} />
           </div>
         </div>
       </main>

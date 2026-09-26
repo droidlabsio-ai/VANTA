@@ -6,7 +6,8 @@ import { hasDatabase, prisma } from "@/lib/db";
 import { getCustomer } from "@/lib/auth/customerSession";
 import { checkoutSchema, type CheckoutFormState } from "@/lib/checkoutSchema";
 import { fieldErrors } from "@/lib/auth/accountSchema";
-import { generateOrderNumber, guestOrderPath, priceBag } from "@/lib/orders";
+import { generateOrderNumber, guestOrderPath, priceBag, type PricedLine } from "@/lib/orders";
+import { OutOfStockError, reserveStock, stockLevels } from "@/lib/stock";
 import { COURIER_PUSH, enqueue } from "@/lib/outbox";
 import { createRazorpayOrder, isRazorpayConfigured } from "@/lib/payments/razorpay";
 import { checkAll, rateLimitKey, recordFailureAll } from "@/lib/rateLimit";
@@ -25,15 +26,18 @@ import { headers } from "next/headers";
 const NO_DATABASE = "Checkout isn’t available right now. Please try again shortly.";
 
 /** Re-read here so a stale tab cannot place an order at yesterday's price. */
-function parseLines(raw: FormDataEntryValue | null): Array<{ productId: string; quantity: number }> {
+function parseLines(
+  raw: FormDataEntryValue | null,
+): Array<{ productId: string; sku?: string; quantity: number }> {
   try {
     const parsed: unknown = JSON.parse(String(raw ?? "[]"));
     if (!Array.isArray(parsed)) return [];
     return parsed.flatMap((entry) => {
       const productId = typeof entry?.productId === "string" ? entry.productId : "";
+      const sku = typeof entry?.sku === "string" && entry.sku ? entry.sku : undefined;
       const quantity = Number(entry?.quantity);
       return productId && Number.isFinite(quantity) && quantity > 0
-        ? [{ productId, quantity: Math.floor(quantity) }]
+        ? [{ productId, ...(sku ? { sku } : {}), quantity: Math.floor(quantity) }]
         : [];
     });
   } catch {
@@ -64,6 +68,14 @@ async function clientIp(): Promise<string> {
   const headerList = await headers();
   const forwarded = headerList.get("x-forwarded-for");
   return forwarded?.split(",")[0].trim() ?? headerList.get("x-real-ip") ?? "unknown";
+}
+
+/** "Only 1 left in size M of Oversized Tee" — names the line so the shopper knows what to change. */
+function outOfStockMessage(line: Pick<PricedLine, "title" | "size">, available: number): string {
+  const what = line.size ? `size ${line.size} of ${line.title}` : line.title;
+  return available <= 0
+    ? `Sorry — ${what} just sold out. Remove it from your bag or choose another size.`
+    : `Only ${available} left in ${what}. Lower the quantity in your bag and try again.`;
 }
 
 function tooManyOrders(retryAfterSeconds: number): CheckoutFormState {
@@ -168,7 +180,27 @@ export async function createOrder(
       },
     };
   }
+  if (priced.needsSize.length > 0) {
+    return {
+      errors: {
+        form: `Choose a size for ${priced.needsSize.join(", ")} in your bag before checking out.`,
+      },
+    };
+  }
   if (priced.lines.length === 0) return { errors: { form: "Your bag is empty." } };
+
+  /**
+   * Stock, read before the captcha so an obvious "sold out" costs the shopper
+   * no token (§47). This read can be stale by the time the order is written;
+   * `reserveStock` inside the transaction below is the check that decides.
+   */
+  const levels = await stockLevels(priced.lines.flatMap((l) => (l.sku ? [l.sku] : [])));
+  const short = priced.lines.find(
+    (l) => l.sku !== null && levels.has(l.sku) && (levels.get(l.sku) ?? 0) < l.quantity,
+  );
+  if (short) {
+    return { errors: { form: outOfStockMessage(short, Math.max(0, levels.get(short.sku!) ?? 0)) } };
+  }
 
   /**
    * The captcha is checked last, after everything that can be corrected on the
@@ -237,6 +269,8 @@ export async function createOrder(
             items: {
               create: priced.lines.map((line) => ({
                 productId: line.productId,
+                sku: line.sku,
+                size: line.size,
                 title: line.title,
                 imageSrc: line.imageSrc,
                 imageAlt: line.imageAlt,
@@ -248,6 +282,13 @@ export async function createOrder(
           },
         });
         orderId = created.id;
+
+        /**
+         * Stock is taken in the same transaction as the order (§47): if any
+         * tracked size is short, this throws, and the order, its lines and the
+         * stock already taken for earlier lines all roll back together.
+         */
+        await reserveStock(tx, priced.lines);
 
         /**
          * A COD order is confirmed the moment it is written, so it can be
@@ -299,6 +340,14 @@ export async function createOrder(
       });
       break;
     } catch (error) {
+      if (error instanceof OutOfStockError) {
+        const line = priced.lines.find((l) => l.sku === error.sku);
+        return {
+          errors: {
+            form: outOfStockMessage(line ?? { title: error.sku, size: null }, error.available),
+          },
+        };
+      }
       const isDuplicate =
         typeof error === "object" &&
         error !== null &&
@@ -376,6 +425,11 @@ export async function createOrder(
   }
 
   if (customer) revalidatePath("/account");
+  // Product pages are pre-rendered with their sizes' stock. The order just
+  // took some, so those pages are rebuilt on their next visit (§47).
+  for (const productId of new Set(priced.lines.map((l) => l.productId))) {
+    revalidatePath(`/products/${productId}`);
+  }
 
   /**
    * Guests get a signed link; a signed-in customer does not need one, because

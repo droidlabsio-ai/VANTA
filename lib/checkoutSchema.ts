@@ -23,6 +23,8 @@ const MAX_LINES = 200;
 
 export const checkoutLineSchema = z.object({
   productId: z.string().trim().min(1).max(128),
+  /** The size's SKU (§47). Optional: a bag from before §47 has none. */
+  sku: z.string().trim().max(64).optional(),
   quantity: z.number().int().min(1).max(MAX_QTY),
 });
 

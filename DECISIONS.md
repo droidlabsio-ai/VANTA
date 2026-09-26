@@ -4046,6 +4046,93 @@ is the production deploy, and its log is the verification.
   with it until it is replaced.
 - `vanta-dev` now carries the §44 table and migration record as well — harmless.
 
+## 47. Sizes reach the parcel, and stock is counted per size
+
+Step 2 of the finishing plan. Before this, the product page asked for a size
+(§41) and threw it away: a bag line was `{ id, qty }`, `OrderItem` had no size,
+and the courier was sent the product id as its SKU. An order could not say
+which size to ship, and nothing could ever sell out.
+
+### A bag line is a product in a size
+
+`lib/bagLine.ts` is shared by the browser bag, the signed-in mirror and
+checkout, so all three agree on what a line is: `{ id, sku?, qty }`, keyed by
+`lineKey` (`id::sku`). M and L of one jacket are two lines. `resolveLine`
+matches the SKU against the product's variants (case-insensitively, as §41's
+publish rules do) and returns the variant and its price.
+
+`sku` is optional on purpose. Bags saved before this change live on in
+browsers and in `BagLine` rows. They are kept, not dropped: a one-size product
+resolves to its only size by itself, and a multi-size one shows a **"Choose a
+size" picker in the bag**, with Checkout held until one is picked. The server
+refuses such a line too (`priceBag` → `needsSize`), so a stale tab cannot slip
+past the bag page. A SKU the product no longer has is treated as unavailable.
+
+The localStorage key is unchanged (`vanta_bag_v1`): old lines parse as lines
+without a size, which is exactly what they are.
+
+### Orders record the size
+
+`OrderItem` gains nullable `size` and `sku` — nullable because every order
+placed before today has neither. The order page shows the size; the courier
+push sends the variant SKU (falling back to the product id for old orders) and
+puts "(Size M)" in the item name so whoever packs reads it without a lookup.
+
+### Stock: a `StockLevel` row per SKU, and no row means "not counted"
+
+Stock lives in Postgres, not in the content document — §41 explains why
+(Publish would write stale counts back). `StockLevel { sku, quantity }`.
+
+**No row = not tracked = always available. A row at 0 = sold out.** That lets
+the shop keep running before anyone has counted anything, and lets counting
+start one product at a time. `lib/stock.ts` is the only place that rule is
+decided.
+
+Checkout takes stock **inside the order transaction** with one conditional
+`UPDATE … SET quantity = quantity - n WHERE sku = … AND quantity >= n` per SKU.
+Two shoppers buying the last M race to one winner: the second update matches
+nothing, `OutOfStockError` is thrown, and the whole order — lines, bag clear,
+saved address, earlier lines' stock — rolls back. The loser is told which size
+sold out. A cheaper read before the captcha catches the obvious case without
+spending the shopper's Turnstile token.
+
+Verified locally against Postgres 16: two browsers submitting at once for a
+count of 1 → exactly one order, count 0 (not −1), the other shown "just sold
+out".
+
+Not done here, deliberately: **cancelling an order does not put stock back**.
+Nothing cancels orders yet (step 6 adds admin order tools); restocking belongs
+with that action. Unpaid ONLINE orders also hold their stock — correct while
+they can still be paid, and step 3 decides what happens when they are
+abandoned.
+
+### Where shoppers see it
+
+- Product page: sold-out sizes are marked and can't be chosen (the §41
+  picker already supported this; it now has real data). Pressing Add to Bag
+  without a size now says **"Please choose a size first."** in orange instead
+  of a dimmed button that looked broken.
+- Bag: each line shows its size; a sold-out line says so and holds Checkout.
+- Checkout summary: "Size M · Qty 1".
+- Product pages are already rendered per request; placing an order and saving
+  stock both revalidate the affected product pages anyway.
+
+### Admin: `/admin/stock`
+
+One card per published product, one box per size, "Save stock" per product.
+Blank = stop counting (row deleted); a whole number ≥ 0 = count. Only SKUs the
+published catalogue has are accepted. Every save is audited as
+`stock.updated` with the changes, shown on the Security page as "Updated
+stock".
+
+### Deploying
+
+Migration `20260926120000_sizes_and_stock`: `BagLine` gets `sku` (default `''`,
+part of a new primary key — `''` rather than null because it is in the key),
+`OrderItem` gets `size`/`sku`, `StockLevel` is created. All additive; existing
+rows stay valid. Applied to a copy with existing data without error. Deploy it
+with §46: `RUN_DB_MIGRATIONS=1` on Production for the one deploy, then remove.
+
 ## Known issues / follow-ups
 
 Every entry below was re-checked against the code on 2026-09-08. (The date read
@@ -4101,12 +4188,11 @@ entry that no longer matches the code, fix the entry in the same change.**
   the old behaviour rather than breaking, which makes a real test event more
   valuable, not less. Confirm both the entity nesting **and** that `notes`
   comes back on the payment entity.
-- **The bag does not carry a size.** The product page asks for one (§41) and
-  then discards it: a bag line is `{ id, qty }`, `OrderItem` has no size or SKU
-  column, and the courier push sends the product id as the `sku`. An order
-  placed today cannot say which size to ship. Needs a bag line keyed by SKU, a
-  migration adding the size and SKU to `OrderItem`, and the variant SKU in
-  `lib/shipping/courierPush.ts`.
+- ~~**The bag does not carry a size.**~~ Resolved in §47: bag lines, orders
+  and the courier push all carry the variant SKU and size, and stock is counted
+  per size.
+- **Cancelling an order does not restock it** (§47). Nothing cancels orders
+  yet; when step 6 adds that action it must add the quantities back.
 
 ### Correctness and security
 

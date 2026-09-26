@@ -134,18 +134,22 @@ model Address {
   @@index([customerId])
 }
 
-/// The signed-in bag. One row per product, quantity only — no name, price or
-/// image, for the same reason `components/BagProvider.tsx` stores none.
+/// The signed-in bag. One row per product and size, quantity only — no name,
+/// price or image, for the same reason `components/BagProvider.tsx` stores none.
 model BagLine {
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   productId String
+  /// The size's SKU (§47). Empty for a line saved before sizes were carried,
+  /// or for a product with no sizes — empty rather than null so it can be part
+  /// of the primary key.
+  sku       String @default("")
   qty       Int
 
   updatedAt DateTime @updatedAt
 
-  @@id([customerId, productId])
+  @@id([customerId, productId, sku])
 }
 
 /// The signed-in wishlist. A set of product ids; `createdAt` is what makes
@@ -420,6 +424,10 @@ model OrderItem {
   title     String
   imageSrc  String
   imageAlt  String
+  /// The size bought, and its SKU, as they were at purchase (§47). Null on
+  /// orders placed before sizes were carried — those never recorded one.
+  size      String?
+  sku       String?
   /// Unit price in paise, as charged.
   unitPrice Int
   quantity  Int
@@ -429,6 +437,23 @@ model OrderItem {
 
   @@index([orderId])
   @@index([productId])
+}
+
+/// How many of a size are in stock (§47). Keyed by the variant's SKU, which is
+/// stored on the product in the content document (§41).
+///
+/// A table, not a field on the product, for the reason §41 gives: the content
+/// document is read and written whole on every publish, so a count inside it
+/// could not be decremented atomically and a publish would overwrite every
+/// sale made since the editor loaded the page.
+///
+/// **No row means not tracked**, and a size that is not tracked is always
+/// available — so a shop can go live before anyone has counted anything, and
+/// start tracking one product at a time. A row at 0 is sold out.
+model StockLevel {
+  sku       String   @id
+  quantity  Int
+  updatedAt DateTime @updatedAt
 }
 
 /// Webhook deliveries already handled, so replaying one changes nothing.

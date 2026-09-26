@@ -68,10 +68,13 @@ export async function pushOrderToCourier(orderId: string): Promise<ShipResult<vo
     // nothing internal is — see `lib/money.ts`.
     subTotal: paiseToRupees(order.subtotal),
     items: order.items.map((item) => ({
-      name: item.title,
-      // Their `sku` is required. The product id is the only stable identifier
-      // this catalogue has, and it is what an invoice should reconcile against.
-      sku: item.productId,
+      // The size in the name too, so whoever packs the parcel reads it
+      // without looking the SKU up (§47).
+      name: item.size ? `${item.title} (Size ${item.size})` : item.title,
+      // Their `sku` is required. The variant's SKU since §47 — it is what the
+      // warehouse picks by. Orders placed before that have none, and fall back
+      // to the product id, the only stable identifier they carry.
+      sku: item.sku ?? item.productId,
       units: item.quantity,
       sellingPrice: paiseToRupees(item.unitPrice),
     })),

@@ -5,6 +5,8 @@ import Link from "next/link";
 import type { Product } from "@/data/types";
 import { useEffect, useMemo } from "react";
 import { useBag } from "@/components/BagProvider";
+import { lineKey, resolveLine } from "@/lib/bagLine";
+import { variantsOf } from "@/lib/variants";
 import { backdropClass } from "@/lib/backdrops";
 import { formatINR, cn } from "@/lib/format";
 import { PincodeCheck } from "@/components/shipping/PincodeCheck";
@@ -15,9 +17,22 @@ import { PincodeCheck } from "@/components/shipping/PincodeCheck";
  * The catalogue arrives as a prop from the server page. The bag itself stores
  * only ids and quantities, so this is where a line becomes a name, a price and
  * a photograph — always today's, never the ones from the day it was added.
+ *
+ * Since §47 a line is a product *in a size*. A line saved before that has no
+ * size; for a multi-size product it gets a size picker here, and checkout is
+ * held until one is chosen. `soldOut` is every SKU at zero stock, read by the
+ * server page, so a line that sold out since it was added says so here rather
+ * than at the last step.
  */
-export function BagContents({ catalogue }: { catalogue: Product[] }) {
-  const { lines, changeQty, remove, clear, hydrated, pruneTo, droppedCount } = useBag();
+export function BagContents({
+  catalogue,
+  soldOut = [],
+}: {
+  catalogue: Product[];
+  soldOut?: string[];
+}) {
+  const { lines, changeQty, remove, clear, hydrated, pruneTo, droppedCount, setSize } = useBag();
+  const soldOutSet = useMemo(() => new Set(soldOut), [soldOut]);
 
   // Memoised: it is a dependency of the pruning effect below, and a fresh
   // Map every render would re-run it every render.
@@ -31,8 +46,17 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
    */
   const resolved = lines.flatMap((line) => {
     const product = byId.get(line.id);
-    return product ? [{ line, product }] : [];
+    if (!product) return [];
+    const resolution = resolveLine(product, line.sku);
+    const key = lineKey(line);
+    const isSoldOut = resolution.variant !== null && soldOutSet.has(resolution.variant.sku);
+    return [{ line, product, resolution, key, unitPrice: resolution.unitPrice, isSoldOut }];
   });
+
+  /** Lines checkout would refuse: no size chosen, or a size that has sold out. */
+  const needsSize = resolved.filter(({ resolution }) => resolution.status !== "ok");
+  const soldOutLines = resolved.filter(({ isSoldOut }) => isSoldOut);
+  const blocked = needsSize.length > 0 || soldOutLines.length > 0;
 
   /**
    * Drop lines whose product has left the catalogue.
@@ -55,10 +79,10 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
   /** Counted from what is actually in the bag, never from unresolved lines. */
   const itemCount = resolved.reduce((total, { line }) => total + line.qty, 0);
 
-  const subtotal = resolved.reduce((sum, { line, product }) => sum + product.price * line.qty, 0);
-  const savings = resolved.reduce((sum, { line, product }) => {
-    if (!product.compareAtPrice || product.compareAtPrice <= product.price) return sum;
-    return sum + (product.compareAtPrice - product.price) * line.qty;
+  const subtotal = resolved.reduce((sum, { line, unitPrice }) => sum + unitPrice * line.qty, 0);
+  const savings = resolved.reduce((sum, { line, product, unitPrice }) => {
+    if (!product.compareAtPrice || product.compareAtPrice <= unitPrice) return sum;
+    return sum + (product.compareAtPrice - unitPrice) * line.qty;
   }, 0);
   const allCod = resolved.length > 0 && resolved.every(({ product }) => product.codAvailable);
 
@@ -97,8 +121,8 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
         )}
 
         <ul className="divide-y divide-ink-line border-y border-ink-line">
-          {resolved.map(({ line, product }) => (
-            <li key={line.id} className="flex gap-4 py-5">
+          {resolved.map(({ line, product, resolution, key, unitPrice, isSoldOut }) => (
+            <li key={key} className="flex gap-4 py-5">
               <Link
                 href={product.href}
                 className={cn(
@@ -119,9 +143,43 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
                 <Link href={product.href} className="text-sm font-medium text-bone hover:underline">
                   {product.name}
                 </Link>
+                {resolution.status === "ok" ? (
+                  resolution.variant && variantsOf(product).length > 1 && (
+                    <p className="mt-1 text-xs uppercase tracking-[0.12em] text-bone/60">
+                      Size {resolution.variant.size}
+                    </p>
+                  )
+                ) : (
+                  <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-flare-orange">
+                    Choose a size
+                    <select
+                      value=""
+                      onChange={(event) => event.target.value && setSize(key, event.target.value)}
+                      className="border border-flare-orange/60 bg-ink px-2 py-1 text-xs text-bone"
+                      aria-label={`Choose a size for ${product.name}`}
+                    >
+                      <option value="">Select</option>
+                      {variantsOf(product).map((variant) => (
+                        <option
+                          key={variant.sku}
+                          value={variant.sku}
+                          disabled={soldOutSet.has(variant.sku)}
+                        >
+                          {variant.size}
+                          {soldOutSet.has(variant.sku) ? " — sold out" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {isSoldOut && (
+                  <p className="mt-1 text-xs font-semibold text-flare-orange">
+                    Sold out — remove it to check out.
+                  </p>
+                )}
                 <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-sm text-bone/80">{formatINR(product.price)}</span>
-                  {product.compareAtPrice && product.compareAtPrice > product.price && (
+                  <span className="text-sm text-bone/80">{formatINR(unitPrice)}</span>
+                  {product.compareAtPrice && product.compareAtPrice > unitPrice && (
                     <span className="text-xs text-bone/40 line-through">
                       {formatINR(product.compareAtPrice)}
                     </span>
@@ -132,7 +190,7 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
                   <div className="flex items-center border border-ink-line">
                     <button
                       type="button"
-                      onClick={() => changeQty(line.id, -1)}
+                      onClick={() => changeQty(key, -1)}
                       aria-label={`Decrease quantity of ${product.name}`}
                       className="px-3 py-1.5 text-bone/60 transition-colors hover:text-bone"
                     >
@@ -148,7 +206,7 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
                     </span>
                     <button
                       type="button"
-                      onClick={() => changeQty(line.id, 1)}
+                      onClick={() => changeQty(key, 1)}
                       aria-label={`Increase quantity of ${product.name}`}
                       className="px-3 py-1.5 text-bone/60 transition-colors hover:text-bone"
                     >
@@ -158,7 +216,7 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
 
                   <button
                     type="button"
-                    onClick={() => remove(line.id)}
+                    onClick={() => remove(key)}
                     className="text-xs uppercase tracking-[0.12em] text-bone/40 underline underline-offset-4 transition-colors hover:text-bone"
                   >
                     Remove
@@ -167,7 +225,7 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
               </div>
 
               <p className="shrink-0 text-sm tabular-nums text-bone">
-                {formatINR(product.price * line.qty)}
+                {formatINR(unitPrice * line.qty)}
               </p>
             </li>
           ))}
@@ -226,12 +284,28 @@ export function BagContents({ catalogue }: { catalogue: Product[] }) {
           nowhere to send anyone; /checkout exists, so the honest thing is no
           longer a disabled label.
         */}
-        <Link
-          href="/checkout"
-          className="block w-full rounded-full bg-bone px-8 py-4 text-center text-label-lg font-bold uppercase text-ink transition-colors hover:bg-white"
-        >
-          Checkout
-        </Link>
+        {blocked ? (
+          <>
+            <p role="status" className="mb-3 text-xs font-semibold text-flare-orange">
+              {needsSize.length > 0
+                ? `Choose a size for ${needsSize.map(({ product }) => product.name).join(", ")} to check out.`
+                : "Remove the sold-out items to check out."}
+            </p>
+            <span
+              aria-disabled="true"
+              className="block w-full cursor-not-allowed rounded-full bg-bone/30 px-8 py-4 text-center text-label-lg font-bold uppercase text-ink"
+            >
+              Checkout
+            </span>
+          </>
+        ) : (
+          <Link
+            href="/checkout"
+            className="block w-full rounded-full bg-bone px-8 py-4 text-center text-label-lg font-bold uppercase text-ink transition-colors hover:bg-white"
+          >
+            Checkout
+          </Link>
+        )}
 
         <Link
           href="/products"

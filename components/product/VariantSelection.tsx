@@ -174,10 +174,13 @@ export function VariantPrice({ className }: { className?: string }) {
 
 /** Add to Bag, blocked until a size is chosen, with the reason shown beside it. */
 export function VariantAddToBag({ productId }: { productId: string }) {
-  const { blockedReason, pickerRef } = useVariantSelection();
+  const { blockedReason, pickerRef, chosen } = useVariantSelection();
   return (
     <AddToBagButton
       productId={productId}
+      // The chosen size travels with the line (§47). Before, the selection
+      // gated the button and was then thrown away.
+      sku={chosen?.sku}
       blockedReason={blockedReason}
       // Pressing it without a size takes you to the thing that fixes that.
       onBlockedClick={() =>

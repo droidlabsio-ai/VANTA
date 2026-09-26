@@ -5,18 +5,22 @@ import { prisma } from "@/lib/db";
 import { contentStore } from "@/lib/contentStore";
 import { rupeesToPaise } from "@/lib/money";
 import type { Product } from "@/data/types";
+import { resolveLine } from "@/lib/bagLine";
 
 /**
  * Orders: pricing, numbering, and the guest access link.
  *
  * The rule that shapes this file: **the browser never sends a price.** It sends
- * product ids and quantities. Everything monetary is computed here, from the
- * catalogue the storefront itself renders from. A checkout that trusts a total
- * from a form has handed the customer a discount field.
+ * product ids, sizes and quantities. Everything monetary is computed here, from
+ * the catalogue the storefront itself renders from. A checkout that trusts a
+ * total from a form has handed the customer a discount field.
  */
 
 export interface PricedLine {
   productId: string;
+  /** The size's SKU and label (§47); null for a product with no sizes. */
+  sku: string | null;
+  size: string | null;
   title: string;
   imageSrc: string;
   imageAlt: string;
@@ -33,41 +37,71 @@ export interface PricedBag {
   shipping: number;
   discount: number;
   total: number;
-  /** Ids that no longer resolve, so the page can say so instead of silently
-   *  charging for fewer things than the customer thought they were buying. */
+  /** Product ids that are gone, or sizes the product no longer has — so the page
+   *  can say so instead of silently charging for fewer things than the customer
+   *  thought they were buying. */
   unavailable: string[];
+  /** Product names whose line has no size yet — a bag from before §47. */
+  needsSize: string[];
 }
 
 /**
- * Prices a bag against the live catalogue.
+ * Prices a bag from the published catalogue — never from anything the browser
+ * sent but ids, sizes and quantities.
  *
  * Used twice, deliberately: once to render the checkout summary, and again
- * inside `createOrder` immediately before writing. They are separate reads
- * because a price can change between someone opening checkout and pressing the
- * button, and the second read is the one that decides. Rendering a total and
- * then trusting it would mean a stale tab could place an order at yesterday's
- * price.
+ * inside `createOrder` immediately before writing. A price can change between
+ * someone opening checkout and pressing the button, and the second read is the
+ * one that decides.
+ *
+ * Since §47 each line names a size by SKU, and the price is that size's price
+ * (`variantPrice`). Lines for the same product and size are merged, so a
+ * doubled line from a tampered form cannot become two order items.
  */
 export async function priceBag(
-  requested: Array<{ productId: string; quantity: number }>,
+  requested: Array<{ productId: string; sku?: string | null; quantity: number }>,
 ): Promise<PricedBag> {
   const { products } = await contentStore.read();
   const byId = new Map<string, Product>(products.map((p) => [p.id, p]));
 
+  const merged = new Map<string, { productId: string; sku: string | null; quantity: number }>();
+  for (const item of requested) {
+    const sku = item.sku?.trim() || null;
+    const key = `${item.productId}::${sku ?? ""}`;
+    const prior = merged.get(key);
+    merged.set(key, {
+      productId: item.productId,
+      sku,
+      quantity: (prior?.quantity ?? 0) + item.quantity,
+    });
+  }
+
   const lines: PricedLine[] = [];
   const unavailable: string[] = [];
+  const needsSize: string[] = [];
 
-  for (const item of requested) {
+  for (const item of merged.values()) {
     const product = byId.get(item.productId);
     if (!product) {
       unavailable.push(item.productId);
       continue;
     }
 
-    const unitPrice = rupeesToPaise(product.price);
+    const resolved = resolveLine(product, item.sku);
+    if (resolved.status === "needs-size") {
+      needsSize.push(product.name);
+      continue;
+    }
+    if (resolved.status === "unknown-size") {
+      unavailable.push(item.productId);
+      continue;
+    }
+
+    const unitPrice = rupeesToPaise(resolved.unitPrice);
     lines.push({
       productId: product.id,
-      // Snapshot fields, read here and copied into the order unchanged.
+      sku: resolved.variant?.sku ?? null,
+      size: resolved.variant?.size ?? null,
       title: product.name,
       imageSrc: product.image.src,
       imageAlt: product.image.alt,
@@ -80,18 +114,23 @@ export async function priceBag(
   const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
 
   /**
-   * Shipping and discount are zero and computed nowhere.
-   *
-   * The trust strip promises free delivery over ₹1,999, but there is no
-   * shipping engine, no rate table and no pincode serviceability check — so
-   * charging anything here would be inventing a number. Zero is the honest
-   * placeholder, and the order stores the columns so adding a real rule later
-   * changes a calculation rather than a schema.
+   * Shipping and discount are zero and computed nowhere. The trust strip
+   * promises free delivery over ₹1,999, but there is no shipping rule yet, so
+   * charging anything here would be inventing a number. The order stores the
+   * columns so adding a real rule later changes a calculation, not a schema.
    */
   const shipping = 0;
   const discount = 0;
 
-  return { lines, subtotal, shipping, discount, total: subtotal + shipping - discount, unavailable };
+  return {
+    lines,
+    subtotal,
+    shipping,
+    discount,
+    total: subtotal + shipping - discount,
+    unavailable,
+    needsSize,
+  };
 }
 
 /**
@@ -99,10 +138,7 @@ export async function priceBag(
  *
  * Counts this year's orders and adds one. That is racy under concurrent
  * checkouts — two orders can compute the same number — which is exactly why
- * `orderNumber` carries a unique index and `createOrder` retries. The
- * alternative, a Postgres sequence, means a migration and a second source of
- * truth for something that is a display string; at this volume a retry loop is
- * cheaper and the failure mode is a unique violation rather than a duplicate.
+ * `orderNumber` carries a unique index and `createOrder` retries.
  */
 async function nextOrderNumber(year: number): Promise<string> {
   const start = new Date(Date.UTC(year, 0, 1));

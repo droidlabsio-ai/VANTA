@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useBag } from "@/components/BagProvider";
+import { lineKey, resolveLine } from "@/lib/bagLine";
 import { backdropClass } from "@/lib/backdrops";
 import { formatINR, cn } from "@/lib/format";
 import type { Product } from "@/data/types";
@@ -26,10 +27,13 @@ export function CheckoutSummary({ catalogue }: { catalogue: Product[] }) {
 
   const resolved = lines.flatMap((line) => {
     const product = byId.get(line.id);
-    return product ? [{ line, product }] : [];
+    if (!product) return [];
+    const resolution = resolveLine(product, line.sku);
+    return [{ line, product, resolution, key: lineKey(line), unitPrice: resolution.unitPrice }];
   });
 
-  const subtotal = resolved.reduce((sum, { line, product }) => sum + product.price * line.qty, 0);
+  const subtotal = resolved.reduce((sum, { line, unitPrice }) => sum + unitPrice * line.qty, 0);
+  const needsSize = resolved.filter(({ resolution }) => resolution.status !== "ok");
   const missing = lines.length - resolved.length;
 
   if (!hydrated) {
@@ -59,9 +63,19 @@ export function CheckoutSummary({ catalogue }: { catalogue: Product[] }) {
         </p>
       )}
 
+      {needsSize.length > 0 && (
+        <p className="mb-4 border border-flare-orange/40 px-3 py-2 text-xs text-flare-orange">
+          Choose a size for {needsSize.map(({ product }) => product.name).join(", ")} in{" "}
+          <Link href="/bag" className="underline underline-offset-2">
+            your bag
+          </Link>{" "}
+          before placing the order.
+        </p>
+      )}
+
       <ul className="divide-y divide-ink-line border-y border-ink-line">
-        {resolved.map(({ line, product }) => (
-          <li key={line.id} className="flex gap-3 py-3">
+        {resolved.map(({ line, product, resolution, key, unitPrice }) => (
+          <li key={key} className="flex gap-3 py-3">
             <div
               className={cn(
                 "relative aspect-[3/4] w-14 shrink-0 overflow-hidden",
@@ -72,10 +86,12 @@ export function CheckoutSummary({ catalogue }: { catalogue: Product[] }) {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm text-bone">{product.name}</p>
-              <p className="text-xs text-bone/40">Qty {line.qty}</p>
+              <p className="text-xs text-bone/40">
+                {resolution.variant ? `Size ${resolution.variant.size} · ` : ""}Qty {line.qty}
+              </p>
             </div>
             <p className="shrink-0 text-sm tabular-nums text-bone">
-              {formatINR(product.price * line.qty)}
+              {formatINR(unitPrice * line.qty)}
             </p>
           </li>
         ))}

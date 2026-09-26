@@ -75,6 +75,7 @@ export const adminNav: AdminNavItem[] = [
     ],
   },
   { label: "Products", href: "/admin/products", icon: ProductsIcon, ready: true },
+  { label: "Stock", href: "/admin/stock", icon: ProductsIcon, ready: true },
   { label: "Categories", href: "/admin/categories", icon: CategoriesIcon, ready: true },
   { label: "Photos & Images", href: "/admin/photos", icon: PhotosIcon, ready: true },
   { label: "Orders & Shipments", href: "/admin/orders", icon: ShipmentsIcon, ready: true },
