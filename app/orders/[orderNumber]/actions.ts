@@ -4,6 +4,7 @@ import { hasDatabase, prisma } from "@/lib/db";
 import { getCustomer } from "@/lib/auth/customerSession";
 import { verifyOrderToken } from "@/lib/orders";
 import { createRazorpayOrder, isRazorpayConfigured, razorpayKeyId } from "@/lib/payments/razorpay";
+import { CHECKOUT_TIMEOUT_SECONDS, canStartPayment } from "@/lib/payments/expiry";
 
 /**
  * Starting (or restarting) a payment.
@@ -30,6 +31,8 @@ export interface PaymentHandoff {
   email?: string;
   name?: string;
   phone?: string;
+  /** Seconds Razorpay's window stays open (§48). */
+  timeout?: number;
 }
 
 /**
@@ -57,8 +60,19 @@ export async function startPayment(
   if (order.paymentMethod !== "ONLINE") {
     return { ok: false, error: "This order isn’t an online payment." };
   }
+  if (order.status === "CANCELLED") {
+    return { ok: false, error: "This order was cancelled because it wasn’t paid in time. Please order again." };
+  }
   if (order.status !== "PENDING_PAYMENT") {
     return { ok: false, error: "This order has already been paid." };
+  }
+  // §48: stock is held for a limited time. Past the window the sweep will
+  // cancel the order, so a payment started now could land on a cancelled one.
+  if (!canStartPayment(order.placedAt)) {
+    return {
+      ok: false,
+      error: "The time to pay for this order has run out. Please place the order again.",
+    };
   }
 
   /**
@@ -97,5 +111,6 @@ export async function startPayment(
     email: order.email,
     name: order.shipName,
     phone: order.shipPhone,
+    timeout: CHECKOUT_TIMEOUT_SECONDS,
   };
 }

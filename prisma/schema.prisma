@@ -364,6 +364,17 @@ model Order {
   razorpayPaymentId String?
   paidAt            DateTime?
 
+  /// --- Cancellation and refund (§48) --------------------------------------
+  /// When and why the order stopped. `payment-timeout` is the sweep in
+  /// `lib/payments/expiry.ts`; stock is returned in the same transaction.
+  cancelledAt  DateTime?
+  cancelReason String?
+  /// Refund started from /admin/orders. `refundStatus` is Razorpay's own word
+  /// — pending, processed or failed — updated by the refund webhooks.
+  razorpayRefundId String?   @unique
+  refundStatus     String?
+  refundedAt       DateTime?
+
   /// --- Delivery (Shiprocket) ----------------------------------------------
   /// Their internal ids, kept so a re-push can update rather than duplicate.
   shiprocketOrderId    String?

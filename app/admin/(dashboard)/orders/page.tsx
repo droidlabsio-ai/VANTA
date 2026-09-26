@@ -5,6 +5,9 @@ import { COURIER_PUSH } from "@/lib/outbox";
 import { isShiprocketConfigured } from "@/lib/shipping/shiprocket";
 import { Button, Card, CardHeader, Pill } from "@/components/admin/ui";
 import { drainQueueAction, rePushOrderAction } from "./actions";
+import { RefundButton } from "@/components/admin/RefundButton";
+import { expireUnpaidOrders } from "@/lib/payments/expiry";
+import { isRazorpayConfigured } from "@/lib/payments/razorpay";
 
 /**
  * Orders and shipments.
@@ -48,6 +51,10 @@ export default async function AdminOrdersPage() {
     );
   }
 
+  // Unpaid online orders past their window are cancelled and their stock
+  // returned before the list is read, so it shows the truth (§48).
+  await expireUnpaidOrders();
+
   const [orders, pendingJobs, failingJobs, unprocessedEvents] = await Promise.all([
     prisma.order.findMany({
       orderBy: { placedAt: "desc" },
@@ -60,6 +67,10 @@ export default async function AdminOrdersPage() {
         paymentMethod: true,
         paidAt: true,
         total: true,
+        razorpayPaymentId: true,
+        refundedAt: true,
+        refundStatus: true,
+        cancelReason: true,
         shipName: true,
         shipCity: true,
         shipPincode: true,
@@ -206,8 +217,26 @@ export default async function AdminOrdersPage() {
                     </Link>
                     <Pill tone={STATUS_TONE[order.status] ?? "neutral"}>{order.status}</Pill>
                     <Pill tone={order.paymentMethod === "COD" ? "muted" : order.paidAt ? "accent" : "muted"}>
-                      {order.paymentMethod === "COD" ? "COD" : order.paidAt ? "Paid" : "Unpaid"}
+                      {order.paymentMethod === "COD"
+                        ? "COD"
+                        : order.refundedAt
+                          ? order.refundStatus === "processed"
+                            ? "Refunded"
+                            : order.refundStatus === "failed"
+                              ? "Refund failed"
+                              : "Refund pending"
+                          : order.paidAt
+                            ? "Paid"
+                            : order.cancelReason === "payment-timeout"
+                              ? "Not paid in time"
+                              : "Unpaid"}
                     </Pill>
+                    {/* Money in, goods not going out: the one state that needs a person. */}
+                    {order.paidAt && !order.refundedAt && order.status === "CANCELLED" && (
+                      <span className="text-xs font-semibold text-admin-danger">
+                        Paid — refund needed
+                      </span>
+                    )}
                     <span className="text-xs text-admin-muted">
                       {order.placedAt.toLocaleDateString("en-IN", {
                         day: "numeric",
@@ -264,11 +293,33 @@ export default async function AdminOrdersPage() {
                       re-push, and a button that quietly does nothing is worse
                       than no button.
                     */}
+                    {order.paymentMethod === "ONLINE" &&
+                      order.paidAt &&
+                      order.razorpayPaymentId &&
+                      !order.refundedAt &&
+                      isRazorpayConfigured() && (
+                        <div className="ml-auto">
+                          <RefundButton
+                            orderId={order.id}
+                            amountLabel={formatPaise(order.total)}
+                            restocks={order.status === "CONFIRMED"}
+                          />
+                        </div>
+                      )}
+
                     {!order.shiprocketOrderId &&
                       order.status !== "PENDING_PAYMENT" &&
                       order.status !== "CANCELLED" &&
                       order.status !== "REFUNDED" && (
-                        <form action={rePushOrderAction} className="ml-auto">
+                        <form
+                          action={rePushOrderAction}
+                          // Beside the Refund button when there is one; right-aligned alone otherwise.
+                          className={
+                            order.paymentMethod === "ONLINE" && order.paidAt && !order.refundedAt
+                              ? ""
+                              : "ml-auto"
+                          }
+                        >
                           <input type="hidden" name="orderId" value={order.id} />
                           <Button type="submit" variant="ghost" className="px-3 py-1 text-xs">
                             Send to courier

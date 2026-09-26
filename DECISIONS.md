@@ -4133,6 +4133,99 @@ part of a new primary key — `''` rather than null because it is in the key),
 rows stay valid. Applied to a copy with existing data without error. Deploy it
 with §46: `RUN_DB_MIGRATIONS=1` on Production for the one deploy, then remove.
 
+## 48. Online payment: a time limit on unpaid orders, and refunds from the admin
+
+Step 3 of the finishing plan. §27 and §29 had already built the payment itself
+— Razorpay order at checkout, hosted checkout, webhook as the only thing that
+marks an order paid, idempotent claims. What was missing was everything around
+it: §47 made unpaid orders hold stock, nothing ever let go of it, and money
+could come in but never go back out.
+
+### Unpaid online orders expire (`lib/payments/expiry.ts`)
+
+Three numbers:
+
+- **30 minutes** to *start* paying. After that the order page stops offering
+  "Pay", and `startPayment` refuses too (a stale tab can call it directly).
+- **15 minutes** is Razorpay's own `timeout` on the payment window, so a
+  window opened at minute 29 closes by minute 44.
+- **60 minutes** after placing, `expireUnpaidOrders` cancels the order
+  (`cancelReason = "payment-timeout"`) and returns its stock, in one
+  transaction, claimed with `status = PENDING_PAYMENT` so two sweeps can't
+  both give the stock back.
+
+There is no scheduler yet (step 4 adds a cron for the courier sync, and should
+call the sweep too). Until then it runs where stale stock would matter:
+**before checkout's stock check** and **when /admin/orders is opened**. The
+customer's order page doesn't need it: it works out "time's up" from
+`placedAt` by itself.
+
+### Late payments are not lost
+
+A bank can confirm after the window. The webhook used to answer 503 for a
+payment on a cancelled order and rely on retries to keep it visible. Now:
+
+- Timed out, sizes still there → **the order is revived**: CONFIRMED, paid,
+  stock taken again, queued for the courier. The shopper paid; they get their
+  order.
+- Sizes gone, or cancelled for another reason → the payment is **written onto
+  the order** (`paidAt`, payment id) and it stays CANCELLED. /admin/orders
+  flags it **"Paid — refund needed"** with a Refund button, and the customer's
+  page says a full refund is coming. The event is marked processed: there is
+  now a button that fixes it, so the order is a better place for it to wait
+  than a webhook row.
+
+### Refunds (`refundOrderAction`, `createRefund`)
+
+A **Refund** button on every paid online order in /admin/orders. Two presses —
+the first spells out the amount and whether stock goes back. Full refunds
+only; a partial refund needs a record of *which* lines came back, which is
+step 6's order screen.
+
+- Razorpay first (`POST /v1/payments/:id/refund`), database second. A refusal
+  changes nothing and shows Razorpay's own reason.
+- **Can't refund twice.** The refund's `receipt` is `refund-<orderNumber>`,
+  which Razorpay treats as an idempotency key. If our database write failed
+  after Razorpay accepted, the second press gets "receipt already used", looks
+  the first refund up (`GET /v1/payments/:id/refunds`) and records that one.
+  Tested: second press, one refund at Razorpay.
+- Stock goes back only when the order was **CONFIRMED** (not yet packed). A
+  packed or shipped parcel is a return, counted by hand. A cancelled order
+  already gave its stock back when it was cancelled.
+- The courier job is closed so a refunded order is never sent.
+- `refund.processed` / `refund.failed` webhooks move `refundStatus` from
+  "pending"; the customer sees "refund in progress", then "refunded".
+- Audited as `payment.refunded` / `payment.refund_failed`.
+
+New columns (migration `20260927090000_payment_expiry_refunds`, all nullable):
+`cancelledAt`, `cancelReason`, `razorpayRefundId` (unique), `refundStatus`,
+`refundedAt`.
+
+### Checked
+
+The webhook payload shape was read from Razorpay's docs this time: the payment
+sits at `payload.payment.entity` with `order_id`, `amount` and `notes`, which
+is what `readWebhookFacts` reads first; the refund at `payload.refund.entity`.
+Empty `notes` arrive as `[]`, which the code tolerates.
+
+Locally, with Razorpay's API replaced by a fake inside the server process and
+webhooks signed with a test secret (25 checks, all passing): online order holds
+stock → captured webhook confirms it → refund returns stock, closes the courier
+job, is audited → `refund.processed` updates it → a second refund press reuses
+the first → a 61-minute-old unpaid order is cancelled and its stock freed → a
+late payment revives it → a late payment with the size gone is flagged "refund
+needed" with no restock offered → no Pay button after 30 minutes → unsigned
+webhooks still refused.
+
+### Setting it up
+
+Test mode needs no KYC. In Razorpay's dashboard (Test mode): API keys →
+`RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET`; Webhooks → URL
+`https://<site>/api/webhooks/razorpay`, a secret of your choosing as
+`RAZORPAY_WEBHOOK_SECRET`, events `payment.captured`, `payment.failed`,
+`order.paid`, `refund.processed`, `refund.failed`. Live mode repeats this with
+live keys after KYC.
+
 ## Known issues / follow-ups
 
 Every entry below was re-checked against the code on 2026-09-08. (The date read
@@ -4166,10 +4259,8 @@ entry that no longer matches the code, fix the entry in the same change.**
 
   **The notice comes out at the same time as those go in, and not before** —
   it is the only thing currently making the pages honest.
-- **No refund path.** Razorpay takes money (§27) but nothing gives it back. A
-  refund today is a manual action in their dashboard, and `REFUNDED` is a status
-  nothing sets. Needs their Refunds API, a reason, and a decision about partial
-  refunds that the order model does not yet express.
+- ~~**No refund path.**~~ Full refunds from /admin/orders since §48. Partial
+  refunds still need step 6's order screen.
 - **No order confirmation email.** Nothing is sent when an order is placed. The
   order page says so and tells the customer to keep the page rather than
   promising a message that will never arrive — but a guest who loses the signed
@@ -4182,6 +4273,10 @@ entry that no longer matches the code, fix the entry in the same change.**
   loud rather than silent — but it has not been tested against a real event.
   Send one test webhook before going live.
 
+  §48 read the nesting from Razorpay's docs (`payload.payment.entity`, with
+  `order_id`, `amount`, `notes`) and it matches what the code reads first. A
+  real test-mode payment is still the proof.
+
   §29 widened this: the same function now also reads `notes.orderNumber` and
   `receipt`, which are the recovery path for an unmapped payment. If the
   nesting guess is wrong, that recovery silently never fires — it degrades to
@@ -4191,8 +4286,11 @@ entry that no longer matches the code, fix the entry in the same change.**
 - ~~**The bag does not carry a size.**~~ Resolved in §47: bag lines, orders
   and the courier push all carry the variant SKU and size, and stock is counted
   per size.
-- **Cancelling an order does not restock it** (§47). Nothing cancels orders
-  yet; when step 6 adds that action it must add the quantities back.
+- **Cancelling an order does not restock it** (§47). Unpaid orders that time
+  out and refunds before packing do return stock since §48 (`releaseStock`);
+  a manual cancel button (step 6) must call it too.
+- **The unpaid-order sweep has no schedule** (§48). It runs before checkout and
+  on /admin/orders. Step 4's cron should call `expireUnpaidOrders` as well.
 
 ### Correctness and security
 

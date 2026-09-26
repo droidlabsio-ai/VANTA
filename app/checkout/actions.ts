@@ -8,6 +8,7 @@ import { checkoutSchema, type CheckoutFormState } from "@/lib/checkoutSchema";
 import { fieldErrors } from "@/lib/auth/accountSchema";
 import { generateOrderNumber, guestOrderPath, priceBag, type PricedLine } from "@/lib/orders";
 import { OutOfStockError, reserveStock, stockLevels } from "@/lib/stock";
+import { expireUnpaidOrders } from "@/lib/payments/expiry";
 import { COURIER_PUSH, enqueue } from "@/lib/outbox";
 import { createRazorpayOrder, isRazorpayConfigured } from "@/lib/payments/razorpay";
 import { checkAll, rateLimitKey, recordFailureAll } from "@/lib/rateLimit";
@@ -194,6 +195,9 @@ export async function createOrder(
    * no token (§47). This read can be stale by the time the order is written;
    * `reserveStock` inside the transaction below is the check that decides.
    */
+  // Unpaid online orders past their window give their sizes back first, so
+  // stock held by an abandoned payment never turns this shopper away (§48).
+  await expireUnpaidOrders();
   const levels = await stockLevels(priced.lines.flatMap((l) => (l.sku ? [l.sku] : [])));
   const short = priced.lines.find(
     (l) => l.sku !== null && levels.has(l.sku) && (levels.get(l.sku) ?? 0) < l.quantity,

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { hasDatabase, prisma } from "@/lib/db";
 import { COURIER_PUSH, enqueue } from "@/lib/outbox";
+import { PAYMENT_TIMEOUT_REASON } from "@/lib/payments/expiry";
+import { OutOfStockError, reserveStock } from "@/lib/stock";
 import {
   HANDLED_EVENTS,
   readWebhookFacts,
@@ -198,6 +200,26 @@ export async function POST(request: Request) {
     }
 
     /**
+     * Refund outcomes (§48). A refund started from /admin/orders is recorded
+     * with Razorpay's id; these events move its status from "pending" to
+     * "processed" or "failed". A refund made in Razorpay's own dashboard has
+     * no order here to update, which is fine — terminal either way.
+     */
+    if (facts.event === "refund.processed" || facts.event === "refund.failed") {
+      if (facts.refundId) {
+        await prisma.order.updateMany({
+          where: { razorpayRefundId: facts.refundId },
+          data: { refundStatus: facts.refundStatus ?? facts.event.slice("refund.".length) },
+        });
+      }
+      if (facts.event === "refund.failed") {
+        console.error(`[razorpay] refund ${facts.refundId ?? "?"} FAILED — needs attention`);
+      }
+      await markProcessed();
+      return NextResponse.json({ ok: true, refund: facts.refundStatus });
+    }
+
+    /**
      * Find the order, by their id first and ours second.
      *
      * `razorpayOrderId` is written by a database call made after their order
@@ -368,15 +390,72 @@ export async function POST(request: Request) {
     }
 
     /**
-     * Unpaid and not accepting payment: CANCELLED or REFUNDED. Money arrived
-     * for something we will not ship, which no retry can resolve — but it must
-     * not vanish either. Left unprocessed so it surfaces in the reconciliation
-     * queue for a human to refund.
+     * Money arrived for an order that is no longer waiting for it. §48.
+     *
+     * The usual cause is a slow payment on an order the expiry sweep already
+     * cancelled (`lib/payments/expiry.ts`) — the shopper paid, just late. If
+     * its sizes can still be taken, the order simply goes ahead: confirmed,
+     * stock taken again, queued for the courier, as if it had been on time.
+     *
+     * Otherwise — sizes gone, or an order a person cancelled — the payment is
+     * written onto the order (`paidAt`, payment id) and the order stays
+     * cancelled. /admin/orders lists it as "Paid — refund needed" with a
+     * Refund button. Until §48 this returned 503 and relied on Razorpay's
+     * retries to keep it visible; now there is a button that fixes it, the
+     * order itself is the better place for it to wait.
      */
+    const late = await prisma.order.findUnique({
+      where: { id: order.id },
+      select: { status: true, cancelReason: true, paidAt: true },
+    });
+    if (!late) {
+      return NextResponse.json({ error: "order-vanished", retry: true }, { status: 503 });
+    }
+
+    let revived = false;
+    if (late.status === "CANCELLED" && late.cancelReason === PAYMENT_TIMEOUT_REASON) {
+      try {
+        revived = await prisma.$transaction(async (tx) => {
+          const claimed = await tx.order.updateMany({
+            where: { id: order.id, status: "CANCELLED", paidAt: null },
+            data: {
+              status: "CONFIRMED",
+              razorpayPaymentId: facts.paymentId,
+              paidAt: new Date(),
+              cancelledAt: null,
+              cancelReason: null,
+            },
+          });
+          if (claimed.count === 0) return false;
+          const items = await tx.orderItem.findMany({
+            where: { orderId: order.id },
+            select: { sku: true, quantity: true },
+          });
+          await reserveStock(tx, items);
+          await enqueue(COURIER_PUSH, order.id, tx);
+          return true;
+        });
+      } catch (error) {
+        if (!(error instanceof OutOfStockError)) throw error;
+        revived = false;
+      }
+    }
+
+    if (revived) {
+      console.warn(`[razorpay] late payment revived ${order.orderNumber}`);
+      await markProcessed();
+      return NextResponse.json({ ok: true, revived: true });
+    }
+
+    await prisma.order.updateMany({
+      where: { id: order.id, paidAt: null },
+      data: { razorpayPaymentId: facts.paymentId, paidAt: new Date() },
+    });
     console.error(
-      `[razorpay] payment for ${order.orderNumber} which is ${current?.status ?? "missing"} — not confirming, needs a refund decision`,
+      `[razorpay] payment for ${order.orderNumber} which is ${late.status} — recorded, REFUND NEEDED`,
     );
-    return NextResponse.json({ error: "order-not-payable", retry: true }, { status: 503 });
+    await markProcessed();
+    return NextResponse.json({ ok: true, refundNeeded: true });
   } catch (error) {
     /**
      * The claim stays unprocessed, so Razorpay's redelivery re-runs the work

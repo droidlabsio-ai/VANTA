@@ -97,3 +97,25 @@ export async function reserveStock(
     if (row) throw new OutOfStockError(sku, Math.max(0, row.quantity));
   }
 }
+
+/**
+ * Puts stock back for an order that will not ship — an unpaid order that timed
+ * out, or a refund before packing (§48).
+ *
+ * Only SKUs that are still counted get anything back. A size someone stopped
+ * counting since (row deleted) stays uncounted; creating a row here would
+ * quietly start tracking it with a meaningless number.
+ */
+export async function releaseStock(
+  tx: Tx,
+  lines: ReadonlyArray<{ sku: string | null; quantity: number }>,
+): Promise<void> {
+  const bySku = new Map<string, number>();
+  for (const line of lines) {
+    if (!line.sku) continue;
+    bySku.set(line.sku, (bySku.get(line.sku) ?? 0) + line.quantity);
+  }
+  for (const [sku, quantity] of bySku) {
+    await tx.stockLevel.updateMany({ where: { sku }, data: { quantity: { increment: quantity } } });
+  }
+}

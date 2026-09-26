@@ -24,6 +24,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  */
 
 const ORDERS_URL = "https://api.razorpay.com/v1/orders";
+const PAYMENTS_URL = "https://api.razorpay.com/v1/payments";
 
 /** Their API is not allowed to hold a checkout open indefinitely. */
 const TIMEOUT_MS = 10_000;
@@ -134,6 +135,9 @@ export function verifyWebhookSignature(rawBody: string, signature: string | null
 
 export interface RazorpayWebhookFacts {
   event: string;
+  /** Present on `refund.*` events (§48). */
+  refundId: string | null;
+  refundStatus: string | null;
   /** Their payment id, when the event carries one. */
   paymentId: string | null;
   /** Their order id, which is how we find ours. */
@@ -186,6 +190,7 @@ export function readWebhookFacts(body: unknown): RazorpayWebhookFacts | null {
   };
 
   const payment = entityFrom("payment");
+  const refund = entityFrom("refund");
   const order = entityFrom("order");
 
   const str = (value: unknown): string | null => {
@@ -217,7 +222,9 @@ export function readWebhookFacts(body: unknown): RazorpayWebhookFacts | null {
 
   return {
     event,
-    paymentId: payment ? str(payment.id) : null,
+    refundId: refund ? str(refund.id) : null,
+    refundStatus: refund ? str(refund.status) : null,
+    paymentId: (payment ? str(payment.id) : null) ?? (refund ? str(refund.payment_id) : null),
     // `order_id` lives on the payment entity; `id` on the order entity. Either
     // is the same order as far as we are concerned.
     orderId: (payment ? str(payment.order_id) : null) ?? (order ? str(order.id) : null),
@@ -231,4 +238,128 @@ export const HANDLED_EVENTS = new Set([
   "payment.captured",
   "payment.failed",
   "order.paid",
+  "refund.processed",
+  "refund.failed",
 ]);
+
+/* ------------------------------------------------------------------------ */
+/* Refunds (§48)                                                             */
+/* ------------------------------------------------------------------------ */
+
+export interface RazorpayRefund {
+  id: string;
+  amount: number;
+  /** "pending" | "processed" | "failed" — their words, stored as given. */
+  status: string;
+}
+
+function basicAuth(): string | null {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) return null;
+  return `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
+}
+
+function asRefund(value: unknown): RazorpayRefund | null {
+  if (typeof value !== "object" || value === null) return null;
+  const r = value as Record<string, unknown>;
+  if (typeof r.id !== "string") return null;
+  return {
+    id: r.id,
+    amount: typeof r.amount === "number" ? r.amount : 0,
+    status: typeof r.status === "string" ? r.status : "pending",
+  };
+}
+
+/**
+ * Refunds a captured payment in full or in part.
+ *
+ * `receipt` is Razorpay's idempotency key for refunds: a second request with
+ * the same receipt is refused instead of paying out twice. We send
+ * `refund-<orderNumber>`, so a double click, a retry after a timeout, or two
+ * admins pressing at once can never refund one order twice. When Razorpay
+ * says the receipt is taken, the refund it already made is looked up and
+ * returned — that is the "our first call worked but we never heard back"
+ * case, and the order must still be recorded as refunded.
+ *
+ * https://razorpay.com/docs/api/refunds/create-normal/
+ */
+export async function createRefund(input: {
+  paymentId: string;
+  amountPaise: number;
+  receipt: string;
+  notes?: Record<string, string>;
+}): Promise<RazorpayResult<RazorpayRefund>> {
+  const auth = basicAuth();
+  if (!auth) return { ok: false, error: "not-configured" };
+
+  try {
+    const response = await fetch(
+      `${PAYMENTS_URL}/${encodeURIComponent(input.paymentId)}/refund`,
+      {
+        method: "POST",
+        headers: { authorization: auth, "content-type": "application/json" },
+        body: JSON.stringify({
+          amount: input.amountPaise,
+          speed: "normal",
+          receipt: input.receipt.slice(0, 40),
+          notes: input.notes ?? {},
+        }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        cache: "no-store",
+      },
+    );
+
+    if (response.ok) {
+      const refund = asRefund(await response.json().catch(() => null));
+      return refund ? { ok: true, value: refund } : { ok: false, error: "razorpay-no-refund-id" };
+    }
+
+    const detail = await response.text().catch(() => "");
+    if (response.status === 400 && /receipt/i.test(detail)) {
+      const existing = await findRefundByReceipt(input.paymentId, input.receipt);
+      if (existing) return { ok: true, value: existing };
+    }
+    console.error(`[razorpay] refund failed: http ${response.status} ${detail.slice(0, 300)}`);
+    return { ok: false, error: refundErrorMessage(detail) };
+  } catch {
+    return { ok: false, error: "Couldn’t reach Razorpay. Nothing was refunded — try again." };
+  }
+}
+
+async function findRefundByReceipt(
+  paymentId: string,
+  receipt: string,
+): Promise<RazorpayRefund | null> {
+  const auth = basicAuth();
+  if (!auth) return null;
+  try {
+    const response = await fetch(`${PAYMENTS_URL}/${encodeURIComponent(paymentId)}/refunds`, {
+      headers: { authorization: auth },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    const body = (await response.json().catch(() => null)) as { items?: unknown[] } | null;
+    const match = body?.items?.find(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as Record<string, unknown>).receipt === receipt,
+    );
+    return asRefund(match);
+  } catch {
+    return null;
+  }
+}
+
+/** Razorpay's own description when it gave one — "fully refunded already" says more than a status code. */
+function refundErrorMessage(detail: string): string {
+  try {
+    const parsed = JSON.parse(detail) as { error?: { description?: unknown } };
+    if (typeof parsed.error?.description === "string") return parsed.error.description;
+  } catch {
+    // Not JSON: fall through.
+  }
+  return "Razorpay refused the refund. Nothing was refunded.";
+}

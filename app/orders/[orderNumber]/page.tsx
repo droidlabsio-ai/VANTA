@@ -13,6 +13,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { OrderPlaced } from "@/components/OrderPlaced";
 import { RazorpayPayButton } from "@/components/checkout/RazorpayPayButton";
 import { isRazorpayConfigured } from "@/lib/payments/razorpay";
+import { PAYMENT_TIMEOUT_REASON, canStartPayment } from "@/lib/payments/expiry";
 
 /**
  * Someone's name, address, phone and what they bought. Never indexed, never
@@ -88,7 +89,13 @@ export default async function OrderPage({
   if (!ownsIt && !hasValidToken) notFound();
 
   const awaitingPayment = order.status === "PENDING_PAYMENT";
-  const canPayNow = awaitingPayment && order.paymentMethod === "ONLINE" && isRazorpayConfigured();
+  // §48: "Pay now" only inside the window stock is held for.
+  const payWindowOpen = canStartPayment(order.placedAt);
+  const canPayNow =
+    awaitingPayment && order.paymentMethod === "ONLINE" && isRazorpayConfigured() && payWindowOpen;
+  const timedOut =
+    order.cancelReason === PAYMENT_TIMEOUT_REASON ||
+    (awaitingPayment && order.paymentMethod === "ONLINE" && !payWindowOpen);
 
   return (
     <div className="storefront-shell">
@@ -104,11 +111,29 @@ export default async function OrderPage({
         <div className="mx-auto max-w-3xl px-gutter pb-24 lg:px-gutter-lg">
           <p className="eyebrow">Order {order.orderNumber}</p>
           <h1 className="headline mt-2 text-display-sm">
-            {order.status === "PENDING_PAYMENT" ? "Order saved" : "Thank you"}
+            {timedOut
+              ? "Payment not completed"
+              : order.status === "CANCELLED"
+                ? "Order cancelled"
+                : order.status === "REFUNDED"
+                  ? "Order refunded"
+                  : order.status === "PENDING_PAYMENT"
+                    ? "Order saved"
+                    : "Thank you"}
           </h1>
 
           <p className="mt-3 max-w-prose text-base leading-relaxed text-bone/60">
-            {awaitingPayment
+            {timedOut
+              ? order.paidAt
+                ? "Your payment arrived after the time to pay had run out and the items were no longer available. We’ll refund it in full — no action needed."
+                : "This order wasn’t paid within 30 minutes, so it has been cancelled and nothing was charged. You’re welcome to place it again."
+              : order.status === "REFUNDED"
+                ? `Your payment has been refunded to the original method. Banks usually take 5–7 working days to show it.`
+                : order.status === "CANCELLED"
+                  ? order.paidAt
+                    ? "This order was cancelled. We’ll refund your payment in full."
+                    : "This order was cancelled and nothing was charged."
+              : awaitingPayment
               ? canPayNow
                 ? "Nothing has been charged yet. Pay below to confirm your order — we’ll hold it in the meantime."
                 : "Online payment isn’t available right now, so nothing has been charged. Your order is held and we’ll be in touch."
@@ -152,7 +177,11 @@ export default async function OrderPage({
               <dd className="mt-1 text-sm text-bone">
                 {order.paymentMethod === "COD"
                   ? "Cash on delivery"
-                  : order.paidAt
+                  : order.refundedAt
+                    ? order.refundStatus === "processed"
+                      ? "Online — refunded"
+                      : "Online — refund in progress"
+                    : order.paidAt
                     ? "Online — paid"
                     : "Online — unpaid"}
               </dd>

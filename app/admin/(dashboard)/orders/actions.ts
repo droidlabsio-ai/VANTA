@@ -6,6 +6,8 @@ import { recordAudit } from "@/lib/auditLog";
 import { hasDatabase, prisma } from "@/lib/db";
 import { COURIER_PUSH, enqueue } from "@/lib/outbox";
 import { drainCourierQueue, pushOrderToCourier } from "@/lib/shipping/courierPush";
+import { createRefund, isRazorpayConfigured } from "@/lib/payments/razorpay";
+import { releaseStock } from "@/lib/stock";
 
 /**
  * Staff actions on the shipments view.
@@ -62,4 +64,113 @@ export async function drainQueueAction(): Promise<void> {
   });
 
   revalidatePath("/admin/orders");
+}
+
+export interface RefundState {
+  ok: boolean;
+  message: string | null;
+}
+
+/**
+ * Refund an online payment in full, from /admin/orders (§48).
+ *
+ * Full refunds only. A partial refund needs a way to say *which* lines came
+ * back, and the order has nowhere to record that yet — step 6's order screen
+ * is where it belongs.
+ *
+ * Razorpay first, database second. If Razorpay refuses, nothing here changes
+ * and the reason is shown. If Razorpay accepts and the database write then
+ * fails, pressing Refund again is safe: the receipt `refund-<orderNumber>` is
+ * Razorpay's idempotency key, so the second press gets the first refund back
+ * instead of paying out twice (`createRefund`).
+ *
+ * Stock goes back only for an order that had not left the building —
+ * CONFIRMED (not yet packed). A packed or shipped order's goods are with the
+ * courier or the customer; they come back as a return, which is counted by
+ * hand on /admin/stock. A cancelled order already returned its stock when it
+ * was cancelled.
+ */
+export async function refundOrderAction(
+  _previous: RefundState,
+  formData: FormData,
+): Promise<RefundState> {
+  const admin = await requireAdmin();
+  if (!hasDatabase()) return { ok: false, message: "No database." };
+  if (!isRazorpayConfigured()) return { ok: false, message: "Razorpay isn’t set up." };
+
+  const orderId = String(formData.get("orderId") ?? "");
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      orderNumber: true,
+      status: true,
+      total: true,
+      paymentMethod: true,
+      razorpayPaymentId: true,
+      paidAt: true,
+      refundedAt: true,
+    },
+  });
+  if (!order) return { ok: false, message: "Order not found." };
+  if (order.paymentMethod !== "ONLINE" || !order.paidAt || !order.razorpayPaymentId) {
+    return { ok: false, message: "Only paid online orders can be refunded here." };
+  }
+  if (order.refundedAt) return { ok: false, message: "Already refunded." };
+
+  const result = await createRefund({
+    paymentId: order.razorpayPaymentId,
+    amountPaise: order.total,
+    receipt: `refund-${order.orderNumber}`,
+    notes: { orderNumber: order.orderNumber, by: admin.username },
+  });
+
+  if (!result.ok) {
+    await recordAudit({
+      actor: admin.username,
+      action: "payment.refund_failed",
+      target: order.orderNumber,
+      detail: { error: result.error },
+    });
+    return { ok: false, message: result.error };
+  }
+
+  const restock = order.status === "CONFIRMED";
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.order.updateMany({
+      where: { id: order.id, refundedAt: null },
+      data: {
+        status: "REFUNDED",
+        refundedAt: new Date(),
+        razorpayRefundId: result.value.id,
+        refundStatus: result.value.status,
+      },
+    });
+    if (claimed.count > 0 && restock) {
+      const items = await tx.orderItem.findMany({
+        where: { orderId: order.id },
+        select: { sku: true, quantity: true },
+      });
+      await releaseStock(tx, items);
+    }
+    // An order refunded before it reached the courier must not be sent now.
+    await tx.outboxJob.updateMany({
+      where: { kind: COURIER_PUSH, orderId: order.id, completedAt: null },
+      data: { completedAt: new Date(), lastError: "refunded" },
+    });
+  });
+
+  await recordAudit({
+    actor: admin.username,
+    action: "payment.refunded",
+    target: order.orderNumber,
+    detail: { refundId: result.value.id, amount: order.total, restocked: restock },
+  });
+
+  revalidatePath("/admin/orders");
+  revalidatePath("/admin/stock");
+  return {
+    ok: true,
+    message: `Refund ${result.value.status === "processed" ? "done" : "started"} (${result.value.id}).`,
+  };
 }

@@ -73,7 +73,7 @@ unavailable rather than pretending.
 
 | Variable(s) | What happens when unset |
 |---|---|
-| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Checkout offers cash on delivery only, and the "Pay online" option says card and UPI are not connected. Orders are still placed and recorded. |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Checkout offers cash on delivery only, and the "Pay online" option says card and UPI are not connected. Orders are still placed and recorded.  Webhook URL `/api/webhooks/razorpay`, events `payment.captured`, `payment.failed`, `order.paid`, `refund.processed`, `refund.failed` (DECISIONS §48). |
 | `SHIPROCKET_*` | Orders are taken and recorded as normal. The pincode check says it cannot check right now, and courier pushes queue in `/admin/orders` until credentials exist. Nothing blocks a sale — that is the §27 rule. |
 | `SHIPROCKET_WEBHOOK_TOKEN` | The courier webhook refuses every request rather than accepting unauthenticated ones. |
 | `SECRET_ENCRYPTION_KEY` | Safe. The Shiprocket token cache is skipped rather than downgraded to plaintext, so it just logs in more often. Only matters once Shiprocket is connected. |

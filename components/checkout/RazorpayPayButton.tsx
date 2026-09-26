@@ -36,6 +36,8 @@ interface RazorpayOptions {
   theme: { color: string };
   handler: () => void;
   modal: { ondismiss: () => void };
+  /** Seconds before Razorpay closes the window by itself. */
+  timeout?: number;
 }
 
 declare global {
@@ -138,6 +140,7 @@ export function RazorpayPayButton({
       theme: { color: "#0b0b0b" },
       // No payment id is read from here, deliberately. See the note above.
       handler: () => setPhase("confirming"),
+      timeout: handoff.timeout,
       modal: { ondismiss: () => setPhase("idle") },
     }).open();
   }, [amount, orderNumber, token]);
