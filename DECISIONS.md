@@ -3986,6 +3986,66 @@ Google Fonts, so screenshots used a fallback face; Archivo 900 is wider, and the
 marquee and finale sizes (`vw`-based) should be checked once on the deployed
 site.
 
+## 46. The deployment migrates its own database, when told to
+
+§44's migration was applied to `vanta-dev` (`ep-billowing-tooth-aztfbx51`), the
+only database in any Neon login the owner could find — and that is not the
+database production uses. Evidence, 2026-09-26: `vanta-dev` holds no orders at
+all, while production shows order VNT-2026-00004; and on production a
+well-formed reset token made `/account/reset-password` answer **500**, which is
+what a query against a missing `PasswordResetToken` table does. Every reset
+request since the §44 deploy was accepted on screen and then failed silently
+inside `after()` before reaching Resend — whose log was accordingly empty.
+
+Production's `DATABASE_URL` is Sensitive in Vercel (write-only, last changed
+Sep 13); `DIRECT_DATABASE_URL` was last set on Sep 5, before that change, so it
+cannot be assumed to match. No copy of the Sep 13 value exists on the laptop.
+The deployment is the one place that provably has the right address.
+
+### What changed
+
+`scripts/vercel-migrate.mjs`, run by `vercel.json`'s `buildCommand` between the
+predeploy gate and `next build`:
+
+- **Off unless `RUN_DB_MIGRATIONS=1`** for the environment being built. A
+  migration changes a live database; it should happen because someone decided
+  it should.
+- Derives the **direct** Neon host from the pooled `DATABASE_URL` (drop
+  `-pooler`), because a transaction-mode pooler cannot hold a migration's
+  advisory lock; any other host is used as given. It does **not** read
+  `DIRECT_DATABASE_URL`, for the reason above.
+- Prints the host and database name — never credentials — so the build log
+  also answers which database production is.
+- Fails the build if the migration fails. Shipping code that expects a table
+  the database lacks is the outage this exists to prevent.
+
+Branches checked with a stubbed `npx`: off → skips; on without a URL → fails;
+Neon pooler host → rewritten to the direct host, `pgbouncer` flag dropped, no
+credentials in the output; non-Neon host → used as given; malformed → fails.
+The real `prisma migrate deploy` could not be run from the build environment
+that wrote this (Prisma's engine download is blocked there); the first real run
+is the production deploy, and its log is the verification.
+
+### Using it
+
+1. Vercel → Settings → Environment Variables → `RUN_DB_MIGRATIONS` = `1`,
+   **Production** only.
+2. Redeploy. The build log shows `[migrate] production: applying migrations to
+   host …` followed by Prisma's list of applied migrations.
+3. Remove the variable afterwards, or keep it if migrate-on-deploy becomes the
+   policy. Step 2 (sizes and stock) needs migrations too.
+
+### Still open
+
+- **Where production's database lives is unknown to the owner.** The build log
+  now names the host. If it is in a Neon account nobody can log into, the owner
+  should create a database they control, move the data, and point
+  `DATABASE_URL` at it.
+- `DIRECT_DATABASE_URL` in production is probably stale. Nothing reads it in
+  production except a manual `prisma migrate` run, which should not be done
+  with it until it is replaced.
+- `vanta-dev` now carries the §44 table and migration record as well — harmless.
+
 ## Known issues / follow-ups
 
 Every entry below was re-checked against the code on 2026-09-08. (The date read

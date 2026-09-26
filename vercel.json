@@ -1,4 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run predeploy && npm run build"
+  "buildCommand": "npm run predeploy && node scripts/vercel-migrate.mjs && npm run build"
 }
